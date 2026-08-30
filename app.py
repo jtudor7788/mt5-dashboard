@@ -9,7 +9,8 @@ from supabase import create_client
 st.set_page_config(page_title="Kona Wolf Trading", page_icon="📈", layout="wide")
 
 DAY_TZ = "America/New_York"   # clock that decides which day/week a trade belongs to
-BASE = 50000                  # each account trades on this; everything above is swept Friday
+STALE_MINUTES = 20            # warn if the VPS hasn't synced in this long
+MATCH_TOLERANCE = 5.00        # $ difference allowed between expected and actual withdrawal
 
 # ---------------------------------------------------------------- palette
 CARD, LINE = "#121A2B", "#1E2A40"
@@ -27,16 +28,13 @@ html, body, [class*="css"] {{ font-family: 'IBM Plex Sans', sans-serif; }}
 .kw-sub {{ color:{MUTED}; font-size:13px; margin-bottom:16px; }}
 .kw-note {{ color:{MUTED}; font-size:12px; margin:0 0 6px; line-height:1.5; }}
 .kw-section {{ font-size:15px; font-weight:600; color:{TEXT}; margin:24px 0 10px; }}
-
-/* metric cards: 4 across, 2 on phones */
+.kw-alert {{ background:#3A1B1F; border:1px solid #6A2A2A; color:#F5B5B8; border-radius:10px; padding:10px 14px; font-size:13px; margin-bottom:12px; }}
 .kw-grid {{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:10px; margin-bottom:10px; }}
 .kw-card {{ background:{CARD}; border:1px solid {LINE}; border-radius:10px; padding:12px 14px 10px; min-width:0; }}
 .kw-label {{ color:{MUTED}; font-size:10.5px; letter-spacing:0.07em; text-transform:uppercase; margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .kw-value {{ font-family:'IBM Plex Mono', monospace; font-size:20px; font-weight:600; color:{TEXT}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .kw-value.small {{ font-size:16px; }}
 .kw-value.pos {{ color:{GREEN}; }}  .kw-value.neg {{ color:{RED}; }}
-
-/* account panels */
 .kw-acct {{ background:{CARD}; border:1px solid {LINE}; border-radius:10px; padding:14px 16px; margin-bottom:10px; }}
 .kw-acct .name {{ font-size:15px; font-weight:600; color:{TEXT}; }}
 .kw-acct .tag {{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:{ACCENT}; margin-left:8px; }}
@@ -46,8 +44,6 @@ html, body, [class*="css"] {{ font-family: 'IBM Plex Sans', sans-serif; }}
 .kw-acct .v.pos {{ color:{GREEN}; }} .kw-acct .v.neg {{ color:{RED}; }}
 .kw-bar {{ height:6px; background:{LINE}; border-radius:3px; margin-top:8px; overflow:hidden; }}
 .kw-bar > div {{ height:100%; background:{PURPLE}; }}
-
-/* calendar: always 7 across */
 .kw-cal {{ display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:6px; }}
 .kw-dow {{ text-align:center; color:{MUTED}; font-size:10.5px; letter-spacing:0.07em; text-transform:uppercase; padding-bottom:4px; }}
 .kw-day {{ border-radius:8px; padding:8px 4px; min-height:78px; text-align:center; font-family:'IBM Plex Mono', monospace; border:1px solid {LINE}; min-width:0; }}
@@ -60,7 +56,6 @@ html, body, [class*="css"] {{ font-family: 'IBM Plex Sans', sans-serif; }}
 .kw-day.empty {{ background:transparent; border-color:transparent; }}
 .kw-monthline {{ font-family:'IBM Plex Mono', monospace; font-size:15px; margin:6px 0 10px; }}
 div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}; }}
-
 @media (max-width: 700px) {{
   .block-container {{ padding-left:0.8rem; padding-right:0.8rem; padding-top:1rem; }}
   .kw-title {{ font-size:20px; }}
@@ -75,7 +70,6 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
   .kw-day .v {{ font-size:10.5px; margin-top:3px; }}
   .kw-day .p {{ display:none; }}
   .kw-dow {{ font-size:9px; }}
-  /* keep selector/button rows side by side instead of stacking */
   div[data-testid="stHorizontalBlock"] {{ flex-wrap:nowrap !important; gap:6px !important; }}
   div[data-testid="stHorizontalBlock"] > div {{ min-width:0 !important; flex:1 1 0 !important; }}
 }}
@@ -112,6 +106,7 @@ def load(token):
     acct = pd.DataFrame(sb.table("accounts").select("*").execute().data)
     settings = pd.DataFrame(sb.table("account_settings").select("*").execute().data)
     expenses = pd.DataFrame(sb.table("expenses").select("*").order("spent_on", desc=True).execute().data)
+    ledger = pd.DataFrame(sb.table("payouts").select("*").execute().data)
     rows, start = [], 0
     while True:
         page = sb.table("deals").select("*").order("time").range(start, start + 999).execute().data
@@ -122,17 +117,16 @@ def load(token):
     deals = pd.DataFrame(rows)
     snaps = pd.DataFrame(sb.table("snapshots").select("*").order("time", desc=True).limit(300).execute().data)
     pos = pd.DataFrame(sb.table("positions").select("*").execute().data)
-    return acct, settings, expenses, deals, snaps, pos
+    return acct, settings, expenses, ledger, deals, snaps, pos
 
 
-acct, settings, expenses, deals, snaps, pos = load(TOKEN)
+acct, settings, expenses, ledger, deals, snaps, pos = load(TOKEN)
 if deals.empty:
     st.warning("No trades yet. Check that the collector is running on the VPS.")
     st.stop()
 
 
 def week_of(d):
-    """Monday of the trading week. Sunday-evening trades belong to the coming week."""
     wd = d.weekday()
     return d + timedelta(days=7 - wd) if wd == 6 else d - timedelta(days=wd)
 
@@ -148,9 +142,14 @@ withdrawals = cash[cash["net"] < 0]
 snaps = snaps.drop_duplicates("login") if not snaps.empty else snaps
 latest = {r["login"]: r for _, r in snaps.iterrows()}
 
+today = datetime.now(pd.Timestamp.now(DAY_TZ).tz).date()
+this_week = week_of(today)
+now_utc = pd.Timestamp.now(tz="UTC")
+
 cfg = {}
 for login in acct["login"]:
     row = settings[settings["login"] == login].iloc[0].to_dict() if not settings.empty and (settings["login"] == login).any() else {}
+    so = row.get("started_on")
     cfg[login] = {
         "nickname": row.get("nickname") or str(login),
         "seed": float(row.get("seed_amount") or 0),
@@ -158,6 +157,8 @@ for login in acct["login"]:
         "seed_holder": row.get("seed_holder") or "Seed",
         "is_master": bool(row.get("is_master", False)),
         "pays_expenses": bool(row.get("pays_expenses", False)),
+        "base": float(row.get("base_amount") or 50000),
+        "started_on": pd.to_datetime(so).date() if so else date(2000, 1, 1),
     }
 logins = sorted(cfg, key=lambda l: (not cfg[l]["is_master"], cfg[l]["nickname"]))
 master = next((l for l in logins if cfg[l]["is_master"]), logins[0])
@@ -174,8 +175,11 @@ else:
     oneoff = pd.DataFrame(columns=["week", "amount"])
 WEEKLY_RECURRING = (monthly * 12 + yearly) / 52
 
-today = datetime.now(pd.Timestamp.now(DAY_TZ).tz).date()
-this_week = week_of(today)
+if not ledger.empty:
+    ledger["week"] = pd.to_datetime(ledger["week"]).dt.date
+    for c in ["gross", "expenses", "seed", "ben", "jesse"]:
+        ledger[c] = ledger[c].astype(float)
+frozen = {(r["week"], r["login"]): r for _, r in ledger.iterrows()} if not ledger.empty else {}
 
 
 # ---------------------------------------------------------------- payout engine
@@ -187,23 +191,54 @@ def compute_payouts(login):
     carry = 0.0
     out = []
     for wk, gross in weekly.items():
-        exp = 0.0
-        if c["pays_expenses"]:
-            exp = WEEKLY_RECURRING + oneoff.loc[oneoff["week"] == wk, "amount"].sum()
-        base = gross - exp + carry
-        if base <= 0:
-            carry, seed_pay, ben, jesse = base, 0.0, 0.0, 0.0
-        else:
-            carry = 0.0
-            seed_pay = min(base * 0.5, seed_left)
-            seed_left -= seed_pay
-            rest = base - seed_pay
-            ben = jesse = rest / 2
         fri = wk + timedelta(days=4)
         w = withdrawals[(withdrawals["login"] == login) & (withdrawals["date"] >= fri) & (withdrawals["date"] < fri + timedelta(days=8))]
+        withdrawn = -w["net"].sum()
+        tracked = wk >= c["started_on"]
+        key = (wk, login)
+        if key in frozen:
+            f = frozen[key]
+            exp, seed_pay, ben, jesse = f["expenses"], f["seed"], f["ben"], f["jesse"]
+            gross = f["gross"]
+            seed_left = max(seed_left - seed_pay, 0.0)
+            carry = 0.0
+            status = "paid"
+        elif not tracked:
+            exp = seed_pay = ben = jesse = 0.0
+            status = "before tracking"
+        else:
+            exp = 0.0
+            if c["pays_expenses"]:
+                exp = WEEKLY_RECURRING + oneoff.loc[oneoff["week"] == wk, "amount"].sum()
+            base = gross - exp + carry
+            if base <= 0:
+                carry, seed_pay, ben, jesse = base, 0.0, 0.0, 0.0
+            else:
+                carry = 0.0
+                seed_pay = min(base * 0.5, seed_left)
+                seed_left -= seed_pay
+                rest = base - seed_pay
+                ben = jesse = rest / 2
+            if wk == this_week:
+                status = "in progress"
+            elif withdrawn == 0 and today < fri + timedelta(days=8):
+                status = "pending"
+            elif abs(withdrawn - (ben + jesse + exp + seed_pay)) > MATCH_TOLERANCE:
+                status = "⚠ mismatch"
+            else:
+                status = "✓ matched"
+        if status == "paid":
+            expected = ben + jesse + exp + seed_pay
+            if withdrawn == 0 and today < fri + timedelta(days=8):
+                status = "paid · pending"
+            elif abs(withdrawn - expected) > MATCH_TOLERANCE:
+                status = "paid · ⚠ mismatch"
+            else:
+                status = "paid ✓"
         out.append({"week": wk, "login": login, "account": c["nickname"], "gross": gross, "expenses": exp,
                     "seed": seed_pay, "ben": ben, "jesse": jesse, "ben_total": ben + exp,
-                    "withdrawn": -w["net"].sum(), "in_progress": wk == this_week, "seed_left_after": seed_left})
+                    "expected_withdrawal": ben + jesse + exp + seed_pay, "withdrawn": withdrawn,
+                    "status": status, "tracked": tracked, "in_progress": wk == this_week, "frozen": key in frozen})
     return pd.DataFrame(out), seed_left
 
 
@@ -212,6 +247,7 @@ for l in logins:
     payouts[l], seed_left[l] = compute_payouts(l)
 allp = pd.concat(payouts.values(), ignore_index=True) if payouts else pd.DataFrame()
 cur = allp[allp["week"] == this_week] if not allp.empty else pd.DataFrame()
+tracked = allp[allp["tracked"]] if not allp.empty else pd.DataFrame()
 
 
 # ---------------------------------------------------------------- helpers
@@ -224,7 +260,6 @@ def sgn(v):
 
 
 def cards(items):
-    """items: list of (label, value, css_class). Renders one responsive grid row."""
     html = "".join(f"<div class='kw-card'><div class='kw-label'>{l}</div><div class='kw-value {c}'>{v}</div></div>" for l, v, c in items)
     st.markdown(f"<div class='kw-grid'>{html}</div>", unsafe_allow_html=True)
 
@@ -241,20 +276,55 @@ def chart_layout(fig, height, legend=False):
     return fig
 
 
+def summary_text(wk):
+    rows = allp[(allp["week"] == wk)]
+    lines = [f"Kona Wolf Trading — week of {wk:%b %d, %Y} (payout Fri {wk + timedelta(days=4):%b %d})", ""]
+    for _, r in rows.iterrows():
+        lines.append(f"{r['account']} (#{r['login']})")
+        lines.append(f"  Gross profit:      ${r['gross']:,.2f}")
+        if r["expenses"]:
+            lines.append(f"  Expenses:          ${r['expenses']:,.2f}  (reimbursed to Ben)")
+        if r["seed"]:
+            lines.append(f"  Seed → {cfg[r['login']]['seed_holder']}:      ${r['seed']:,.2f}")
+        lines.append(f"  Ben receives:      ${r['ben'] + r['expenses']:,.2f}")
+        lines.append(f"  Jesse receives:    ${r['jesse']:,.2f}")
+        lines.append(f"  Withdraw total:    ${r['expected_withdrawal']:,.2f}")
+        lines.append("")
+    if len(rows) > 1:
+        lines.append(f"ALL ACCOUNTS — Ben ${(rows['ben'] + rows['expenses']).sum():,.2f} · Jesse ${rows['jesse'].sum():,.2f} · Seed ${rows['seed'].sum():,.2f} · Withdraw ${rows['expected_withdrawal'].sum():,.2f}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.markdown(f"<div class='kw-label'>Signed in</div><div style='font-size:13px;color:{TEXT}'>{st.session_state.session.user.email}</div>",
                 unsafe_allow_html=True)
     sync_times = [pd.to_datetime(r["time"]) for r in latest.values()]
-    last_sync = max(sync_times).tz_convert("America/New_York").strftime("%b %d, %I:%M %p") if sync_times else "—"
+    last_sync_ts = max(sync_times) if sync_times else None
+    last_sync = last_sync_ts.tz_convert("America/New_York").strftime("%b %d, %I:%M %p") if last_sync_ts is not None else "—"
     st.markdown(f"<div class='kw-label' style='margin-top:14px'>Last sync</div><div style='font-size:13px;color:{TEXT}'>{last_sync} ET</div>",
                 unsafe_allow_html=True)
     st.markdown(f"<div class='kw-label' style='margin-top:14px'>Weekly expenses</div><div style='font-size:13px;color:{TEXT}'>${WEEKLY_RECURRING:,.2f} recurring</div>",
                 unsafe_allow_html=True)
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+    if not tracked.empty:
+        st.download_button("Download payouts (CSV)", tracked.drop(columns=["in_progress", "frozen", "tracked"]).to_csv(index=False).encode(),
+                           "payouts.csv", "text/csv", use_container_width=True)
+    tcsv = trades.copy()
+    tcsv["time"] = tcsv["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    st.download_button("Download trades (CSV)", tcsv.drop(columns=["date", "week"]).to_csv(index=False).encode(),
+                       "trades.csv", "text/csv", use_container_width=True)
+    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     if st.button("Sign out", use_container_width=True):
         del st.session_state.session
         st.rerun()
+
+# ---------------------------------------------------------------- stale-data banner
+if last_sync_ts is not None:
+    age = (now_utc - last_sync_ts).total_seconds() / 60
+    if age > STALE_MINUTES:
+        st.markdown(f"<div class='kw-alert'>⚠ Data is {age:.0f} minutes old. The VPS collector hasn't synced since {last_sync} ET — check that MT5 is logged in and the scheduled task is running.</div>",
+                    unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- header: this week, all accounts
 st.markdown(f"<div class='kw-head'><span class='kw-title'>Kona Wolf Trading</span></div>"
@@ -268,25 +338,35 @@ b = cur["ben"].sum() if not cur.empty else 0
 j = cur["jesse"].sum() if not cur.empty else 0
 half = e / 2
 share = b + half
-cards([("Gross this week", money(g), sgn(g)),
-       ("Seed → Donna", money(sd), ""),
-       ("Expenses this week", money(e), ""),
-       ("Each partner covers", money(half), "")])
-cards([("Ben · profit share", money(share), sgn(share)),
-       ("Ben receives", money(b + e), sgn(b + e)),
-       ("Jesse · profit share", money(share), sgn(share)),
-       ("Jesse receives", money(j), sgn(j))])
+cards([("Gross this week", money(g), sgn(g)), ("Seed → Donna", money(sd), ""),
+       ("Expenses this week", money(e), ""), ("Each partner covers", money(half), "")])
+cards([("Ben · profit share", money(share), sgn(share)), ("Ben receives", money(b + e), sgn(b + e)),
+       ("Jesse · profit share", money(share), sgn(share)), ("Jesse receives", money(j), sgn(j))])
 st.markdown(f"<div class='kw-note'>Ben receives his share {money(share)} − his half of expenses {money(half)} + the full {money(e)} reimbursed for the card = {money(b + e)}. "
             f"Jesse receives his share {money(share)} − his half of expenses {money(half)} = {money(j)}.</div>", unsafe_allow_html=True)
 
+# ---------------------------------------------------------------- running totals
+if not tracked.empty:
+    section("Totals since tracking began")
+    ytd = tracked[[w.year == today.year for w in tracked["week"]]]
+    cards([("Ben · lifetime", money((tracked["ben"] + tracked["expenses"]).sum()), "pos"),
+           ("Jesse · lifetime", money(tracked["jesse"].sum()), "pos"),
+           ("Donna · seed repaid", money(tracked["seed"].sum()), ""),
+           ("Expenses · lifetime", money(tracked["expenses"].sum()), "")])
+    cards([(f"Ben · {today.year}", money((ytd["ben"] + ytd["expenses"]).sum()), "pos"),
+           (f"Jesse · {today.year}", money(ytd["jesse"].sum()), "pos"),
+           (f"Donna · {today.year}", money(ytd["seed"].sum()), ""),
+           (f"Gross · {today.year}", money(ytd["gross"].sum()), sgn(ytd["gross"].sum()))])
+
 # ---------------------------------------------------------------- per-account
 section("Accounts")
-master_week = payouts[master].loc[payouts[master]["week"] == this_week, "gross"].sum() if not payouts[master].empty else 0
+mp = payouts[master]
+master_week = mp.loc[mp["week"] == this_week, "gross"].sum() if not mp.empty else 0
 for l in logins:
     c_ = cfg[l]
     snap = latest.get(l, {})
     bal = float(snap.get("balance", 0) or 0)
-    above = bal - BASE
+    above = bal - c_["base"]
     p = payouts[l]
     wk = p[p["week"] == this_week]
     wk_gross = wk["gross"].sum() if not wk.empty else 0
@@ -294,11 +374,19 @@ for l in logins:
     today_pl = t.loc[t["date"] == today, "net"].sum()
     seed_total = c_["seed"]
     repaid = seed_total - seed_left[l]
-    parts = [("Balance", money(bal), ""), ("Above 50k", f"{above:+,.2f}", sgn(above)),
+    parts = [("Balance", money(bal), ""), (f"Above {c_['base'] / 1000:.0f}k", f"{above:+,.2f}", sgn(above)),
              ("This week", f"{wk_gross:+,.2f}", sgn(wk_gross)), ("Today", f"{today_pl:+,.2f}", sgn(today_pl))]
+    ml = float(snap.get("margin_level") or 0)
+    if ml:
+        parts.append(("Margin level", f"{ml:,.0f}%", "neg" if ml < 200 else ""))
     if not c_["is_master"]:
         drift = wk_gross - master_week
         parts.append(("vs main this week", f"{drift:+,.2f}", sgn(drift)))
+        done = p[~p["in_progress"]].tail(8).set_index("week")["gross"]
+        mdone = mp.set_index("week")["gross"].reindex(done.index).fillna(0)
+        if len(done):
+            avg_drift = (done - mdone).mean()
+            parts.append(("Avg drift · last 8 wks", f"{avg_drift:+,.2f}", sgn(avg_drift)))
     if seed_total > 0 and seed_left[l] > 0:
         parts.append((f"Owed to {c_['seed_holder']}", money(seed_left[l]), ""))
     html = "".join(f"<div><div class='k'>{k}</div><div class='v {cls}'>{v}</div></div>" for k, v, cls in parts)
@@ -310,27 +398,68 @@ for l in logins:
     st.markdown(f"<div class='kw-acct'><span class='name'>{c_['nickname']}</span><span class='tag'>#{l} · {tag}</span>"
                 f"<div class='row'>{html}</div>{bar}</div>", unsafe_allow_html=True)
 
+# ---------------------------------------------------------------- friday summary
+section("Friday summary")
+week_opts = sorted(tracked["week"].unique(), reverse=True) if not tracked.empty else [this_week]
+wsel = st.selectbox("Week", week_opts, format_func=lambda w: f"Week of {w:%b %d}" + (" (in progress)" if w == this_week else ""), label_visibility="collapsed")
+st.code(summary_text(wsel), language=None)
+st.markdown("<div class='kw-note'>Tap the copy icon in the top-right of the box, then paste into a text to Ben or Donna.</div>", unsafe_allow_html=True)
+
 # ---------------------------------------------------------------- weekly payouts chart
 section("Weekly payouts (all accounts)")
-if not allp.empty:
-    wk_sum = allp.groupby("week")[["jesse", "ben", "seed", "expenses"]].sum().sort_index().tail(16)
+if not tracked.empty:
+    wk_sum = tracked.groupby("week")[["jesse", "ben", "seed", "expenses"]].sum().sort_index().tail(16)
     x = [f"{w:%b %d}" for w in wk_sum.index]
     fig = go.Figure()
     for col, name, color in [("jesse", "Jesse", BLUE), ("ben", "Ben", GREEN), ("seed", "Seed → Donna", PURPLE), ("expenses", "Expenses", GREY)]:
         fig.add_bar(x=x, y=wk_sum[col], name=name, marker_color=color, hovertemplate="%{x}<br>" + name + " %{y:,.0f}<extra></extra>")
     st.plotly_chart(chart_layout(fig, 300, legend=True), use_container_width=True, config={"displayModeBar": False})
+else:
+    st.caption("No tracked weeks yet — check started_on in account_settings.")
 
-# ---------------------------------------------------------------- payout history
+# ---------------------------------------------------------------- payout history + mark paid
 section("Payout history")
 if not allp.empty:
-    hist = allp.sort_values(["week", "account"], ascending=[False, True]).head(60).copy()
-    hist["Week"] = hist["week"].map(lambda w: f"{w:%b %d}") + hist["in_progress"].map(lambda x: " *" if x else "")
-    show = hist[["Week", "account", "gross", "expenses", "seed", "ben", "jesse", "ben_total", "withdrawn"]].rename(columns={
-        "account": "Account", "gross": "Gross", "expenses": "Expenses", "seed": "Seed → Donna",
-        "ben": "Ben", "jesse": "Jesse", "ben_total": "Ben incl. expenses", "withdrawn": "Withdrawn (MT5)"})
+    hist = allp.sort_values(["week", "account"], ascending=[False, True]).head(80).copy()
+    hist["Week"] = hist["week"].map(lambda w: f"{w:%b %d}")
+    show = hist[["Week", "account", "status", "gross", "expenses", "seed", "ben", "jesse", "ben_total", "expected_withdrawal", "withdrawn"]].rename(columns={
+        "account": "Account", "status": "Status", "gross": "Gross", "expenses": "Expenses", "seed": "Seed → Donna",
+        "ben": "Ben", "jesse": "Jesse", "ben_total": "Ben incl. expenses", "expected_withdrawal": "Should withdraw", "withdrawn": "Withdrawn (MT5)"})
     st.dataframe(show, use_container_width=True, hide_index=True,
-                 column_config={k: st.column_config.NumberColumn(format="$%.2f") for k in show.columns if k not in ("Week", "Account")})
-    st.markdown("<div class='kw-note'>* week in progress</div>", unsafe_allow_html=True)
+                 column_config={k: st.column_config.NumberColumn(format="$%.2f") for k in show.columns if k not in ("Week", "Account", "Status")})
+
+    with st.expander("Mark a week as paid / undo"):
+        st.markdown("<div class='kw-note'>Marking a week paid freezes its split so later changes to expenses or seed settings don't rewrite history. "
+                    "The withdrawn column stays live from MT5 so a mismatch still shows.</div>", unsafe_allow_html=True)
+        unpaid = tracked[(~tracked["frozen"]) & (~tracked["in_progress"])].sort_values("week", ascending=False)
+        paid = tracked[tracked["frozen"]].sort_values("week", ascending=False)
+        cA, cB = st.columns(2)
+        with cA:
+            if unpaid.empty:
+                st.caption("Nothing waiting to be marked.")
+            else:
+                opts = {f"{r['week']:%b %d} · {r['account']} · Ben {money(r['ben'] + r['expenses'])} / Jesse {money(r['jesse'])}": (r["week"], r["login"]) for _, r in unpaid.iterrows()}
+                ch = st.selectbox("Unpaid weeks", list(opts.keys()))
+                note = st.text_input("Note (optional)")
+                if st.button("Mark paid", use_container_width=True):
+                    wk_, lg_ = opts[ch]
+                    r = unpaid[(unpaid["week"] == wk_) & (unpaid["login"] == lg_)].iloc[0]
+                    sb.table("payouts").upsert({"week": wk_.isoformat(), "login": int(lg_), "gross": float(r["gross"]), "expenses": float(r["expenses"]),
+                                                "seed": float(r["seed"]), "ben": float(r["ben"]), "jesse": float(r["jesse"]),
+                                                "paid_on": today.isoformat(), "note": note or None}).execute()
+                    st.cache_data.clear()
+                    st.rerun()
+        with cB:
+            if paid.empty:
+                st.caption("No weeks marked paid yet.")
+            else:
+                opts2 = {f"{r['week']:%b %d} · {r['account']}": (r["week"], r["login"]) for _, r in paid.iterrows()}
+                ch2 = st.selectbox("Paid weeks", list(opts2.keys()))
+                if st.button("Undo mark", use_container_width=True):
+                    wk_, lg_ = opts2[ch2]
+                    sb.table("payouts").delete().eq("week", wk_.isoformat()).eq("login", int(lg_)).execute()
+                    st.cache_data.clear()
+                    st.rerun()
 
 # ---------------------------------------------------------------- seed tracker
 seeded = [l for l in logins if cfg[l]["seed"] > 0 and seed_left[l] > 0]
@@ -340,7 +469,7 @@ if seeded:
     for l in seeded:
         c_ = cfg[l]
         p = payouts[l]
-        recent = p[~p["in_progress"]].tail(4)["seed"]
+        recent = p[(~p["in_progress"]) & p["tracked"]].tail(4)["seed"]
         rate = recent.mean() if len(recent) else 0
         weeks_left = seed_left[l] / rate if rate > 0 else None
         eta = (this_week + timedelta(weeks=round(weeks_left))).strftime("%b %d, %Y") if weeks_left else "—"
@@ -387,7 +516,6 @@ names = ["All accounts"] + [cfg[l]["nickname"] for l in logins]
 months = sorted({(d.year, d.month) for d in trades["date"]})
 if "cal_idx" not in st.session_state:
     st.session_state.cal_idx = len(months) - 1
-
 r1 = st.columns([1, 1])
 sel = r1[0].selectbox("Account", names, label_visibility="collapsed")
 pick = r1[1].selectbox("Month", months, index=st.session_state.cal_idx, label_visibility="collapsed",
@@ -409,12 +537,11 @@ daily = tsel.groupby("date")["net"].sum()
 year, month = months[st.session_state.cal_idx]
 month_daily = daily[[d.year == year and d.month == month for d in daily.index]]
 m_total = month_daily.sum()
-base_for_pct = BASE * (len(logins) if sel_login is None else 1)
+base_for_pct = sum(cfg[l]["base"] for l in logins) if sel_login is None else cfg[sel_login]["base"]
 col = GREEN if m_total >= 0 else RED
 st.markdown(f"<div class='kw-monthline'><span style='color:{TEXT};font-size:17px'>{calendar.month_name[month]} {year}</span>"
             f"&nbsp;&nbsp;<span style='color:{col}'>{m_total:+,.2f}</span>"
             f"&nbsp;<span style='color:{col};opacity:0.7'>({m_total / base_for_pct * 100:+.2f}%)</span></div>", unsafe_allow_html=True)
-
 tiles = "".join(f"<div class='kw-dow'>{n}</div>" for n in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
 for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
     for day in week:
@@ -448,14 +575,10 @@ for v in daily.sort_index(ascending=False):
         streak += 1
     else:
         break
-cards([("Win rate", f"{len(wins) / n * 100 if n else 0:.0f}%", ""),
-       ("Profit factor", f"{pf:.2f}", ""),
-       ("Avg win / loss", f"{aw:,.0f} / {al:,.0f}", "small"),
-       ("Trades", f"{n:,}", "")])
-cards([("Worst day", money(daily.min() if len(daily) else 0), "neg"),
-       ("Worst week", money(weekly_sel.min() if len(weekly_sel) else 0), "neg"),
-       ("Deepest dip below 50k", money(dd), "neg" if dd < 0 else ""),
-       ("Losing days in a row", f"{streak}", "neg" if streak else "")])
+cards([("Win rate", f"{len(wins) / n * 100 if n else 0:.0f}%", ""), ("Profit factor", f"{pf:.2f}", ""),
+       ("Avg win / loss", f"{aw:,.0f} / {al:,.0f}", "small"), ("Trades", f"{n:,}", "")])
+cards([("Worst day", money(daily.min() if len(daily) else 0), "neg"), ("Worst week", money(weekly_sel.min() if len(weekly_sel) else 0), "neg"),
+       ("Deepest dip below base", money(dd), "neg" if dd < 0 else ""), ("Losing days in a row", f"{streak}", "neg" if streak else "")])
 
 # ---------------------------------------------------------------- trades
 section(f"Trades · {sel}")
