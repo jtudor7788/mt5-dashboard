@@ -243,12 +243,22 @@ e = cur["expenses"].sum() if not cur.empty else 0
 sd = cur["seed"].sum() if not cur.empty else 0
 b = cur["ben"].sum() if not cur.empty else 0
 j = cur["jesse"].sum() if not cur.empty else 0
-c = st.columns(5)
+half = e / 2
+share = b + half          # each partner's share of profit before expenses
+c = st.columns(4)
 card(c[0], "Gross this week", money(g), g)
-card(c[1], "Expenses → Ben", money(e))
-card(c[2], "Seed → Donna", money(sd))
-card(c[3], "Ben", money(b), b)
-card(c[4], "Jesse", money(j), j)
+card(c[1], "Seed → Donna", money(sd))
+card(c[2], "Expenses this week", money(e))
+card(c[3], "Each partner covers", money(half))
+c = st.columns(4)
+card(c[0], "Ben · profit share", money(share), share)
+card(c[1], "Ben receives", money(b + e), b + e)
+card(c[2], "Jesse · profit share", money(share), share)
+card(c[3], "Jesse receives", money(j), j)
+st.markdown(f"<div style='color:{MUTED};font-size:12px;margin:-4px 0 8px'>"
+            f"Ben receives his share {money(share)} − his half of expenses {money(half)} + the full {money(e)} reimbursed for the card = {money(b + e)}. "
+            f"Jesse receives his share {money(share)} − his half of expenses {money(half)} = {money(j)}.</div>",
+            unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- per-account
 section("Accounts")
@@ -413,7 +423,6 @@ aw = wins["net"].mean() if len(wins) else 0
 al = losses["net"].mean() if len(losses) else 0
 pf = wins["net"].sum() / abs(losses["net"].sum()) if len(losses) and losses["net"].sum() != 0 else 0
 weekly_sel = tsel.groupby("week")["net"].sum()
-# worst drawdown below base inside any week (running sum within the week)
 dd = 0.0
 for wk, grp in tsel.sort_values("time").groupby("week"):
     run = grp["net"].cumsum()
