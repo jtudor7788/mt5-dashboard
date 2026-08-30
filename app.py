@@ -35,7 +35,14 @@ if st.sidebar.button("Sign out"):
 def load(token):
     sb.postgrest.auth(token)
     acct = pd.DataFrame(sb.table("accounts").select("*").execute().data)
-    deals = pd.DataFrame(sb.table("deals").select("*").order("time").limit(100000).execute().data)
+    rows, start = [], 0
+    while True:
+        page = sb.table("deals").select("*").order("time").range(start, start + 999).execute().data
+        rows.extend(page)
+        if len(page) < 1000:
+            break
+        start += 1000
+    deals = pd.DataFrame(rows)
     snaps = pd.DataFrame(sb.table("snapshots").select("*").order("time", desc=True).limit(1).execute().data)
     pos = pd.DataFrame(sb.table("positions").select("*").execute().data)
     return acct, deals, snaps, pos
@@ -72,14 +79,16 @@ def card(col, label, value):
     col.metric(label, value)
 
 
-c = st.columns(7)
+c = st.columns(4)
 card(c[0], "Balance", f"{balance:,.2f}")
 card(c[1], "Equity", f"{equity:,.2f}")
 card(c[2], "Floating P&L", f"{floating:,.2f}")
 card(c[3], "Growth %", f"{(total_profit / deposits * 100) if deposits else 0:.2f}%")
-card(c[4], "Total Profit", f"{total_profit:,.2f}")
-card(c[5], "Deposits", f"{deposits:,.2f}")
-card(c[6], "Withdrawals", f"{withdrawals:,.2f}")
+c = st.columns(4)
+card(c[0], "Total Profit", f"{total_profit:,.2f}")
+card(c[1], "Deposits", f"{deposits:,.2f}")
+card(c[2], "Withdrawals", f"{withdrawals:,.2f}")
+card(c[3], "Trades", f"{len(trades):,}")
 
 today = datetime.now(pd.Timestamp.now(TZ).tz).date()
 week_start = today - timedelta(days=today.weekday())
@@ -99,15 +108,16 @@ st.plotly_chart(fig, use_container_width=True)
 wins = trades[trades["net"] > 0]
 losses = trades[trades["net"] < 0]
 n = len(trades)
-c = st.columns(8)
-card(c[0], "Trades", f"{n:,}")
-card(c[1], "Win %", f"{len(wins) / n * 100 if n else 0:.0f}%")
-card(c[2], "Longs / Shorts", f"{(trades['direction'] == 'Long').sum():,} / {(trades['direction'] == 'Short').sum():,}")
-card(c[3], "Avg Win", f"{wins['net'].mean() if len(wins) else 0:,.2f}")
-card(c[4], "Avg Loss", f"{losses['net'].mean() if len(losses) else 0:,.2f}")
-card(c[5], "Best", f"{trades['net'].max():,.2f}")
-card(c[6], "Worst", f"{trades['net'].min():,.2f}")
-card(c[7], "RRR", f"{(wins['net'].mean() / abs(losses['net'].mean())) if len(wins) and len(losses) else 0:.2f}")
+c = st.columns(4)
+card(c[0], "Win %", f"{len(wins) / n * 100 if n else 0:.0f}%")
+card(c[1], "Longs / Shorts", f"{(trades['direction'] == 'Long').sum():,} / {(trades['direction'] == 'Short').sum():,}")
+card(c[2], "Avg Win", f"{wins['net'].mean() if len(wins) else 0:,.2f}")
+card(c[3], "Avg Loss", f"{losses['net'].mean() if len(losses) else 0:,.2f}")
+c = st.columns(4)
+card(c[0], "Best", f"{trades['net'].max():,.2f}")
+card(c[1], "Worst", f"{trades['net'].min():,.2f}")
+card(c[2], "RRR", f"{(wins['net'].mean() / abs(losses['net'].mean())) if len(wins) and len(losses) else 0:.2f}")
+card(c[3], "Won / Lost", f"{len(wins):,} / {len(losses):,}")
 
 st.subheader("Trading Calendar")
 months = sorted({(d.year, d.month) for d in trades["date"]}, reverse=True)
