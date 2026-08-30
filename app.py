@@ -159,6 +159,9 @@ for login in acct["login"]:
         "pays_expenses": bool(row.get("pays_expenses", False)),
         "base": float(row.get("base_amount") or 50000),
         "started_on": pd.to_datetime(so).date() if so else date(2000, 1, 1),
+        "prior_ben": float(row.get("prior_ben") or 0),
+        "prior_jesse": float(row.get("prior_jesse") or 0),
+        "prior_seed": float(row.get("prior_seed") or 0),
     }
 logins = sorted(cfg, key=lambda l: (not cfg[l]["is_master"], cfg[l]["nickname"]))
 master = next((l for l in logins if cfg[l]["is_master"]), logins[0])
@@ -346,17 +349,26 @@ st.markdown(f"<div class='kw-note'>Ben receives his share {money(share)} − his
             f"Jesse receives his share {money(share)} − his half of expenses {money(half)} = {money(j)}.</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- running totals
-if not tracked.empty:
-    section("Totals since tracking began")
-    ytd = tracked[[w.year == today.year for w in tracked["week"]]]
-    cards([("Ben · lifetime", money((tracked["ben"] + tracked["expenses"]).sum()), "pos"),
-           ("Jesse · lifetime", money(tracked["jesse"].sum()), "pos"),
-           ("Donna · seed repaid", money(tracked["seed"].sum()), ""),
-           ("Expenses · lifetime", money(tracked["expenses"].sum()), "")])
-    cards([(f"Ben · {today.year}", money((ytd["ben"] + ytd["expenses"]).sum()), "pos"),
-           (f"Jesse · {today.year}", money(ytd["jesse"].sum()), "pos"),
-           (f"Donna · {today.year}", money(ytd["seed"].sum()), ""),
-           (f"Gross · {today.year}", money(ytd["gross"].sum()), sgn(ytd["gross"].sum()))])
+prior_ben = sum(cfg[l]["prior_ben"] for l in logins)
+prior_jesse = sum(cfg[l]["prior_jesse"] for l in logins)
+prior_seed = sum(cfg[l]["prior_seed"] for l in logins)
+if not tracked.empty or prior_ben or prior_jesse or prior_seed:
+    section("Totals to date")
+    tb = (tracked["ben"] + tracked["expenses"]).sum() if not tracked.empty else 0
+    tj = tracked["jesse"].sum() if not tracked.empty else 0
+    ts = tracked["seed"].sum() if not tracked.empty else 0
+    te = tracked["expenses"].sum() if not tracked.empty else 0
+    tg = tracked["gross"].sum() if not tracked.empty else 0
+    cards([("Ben · all time", money(prior_ben + tb), "pos"),
+           ("Jesse · all time", money(prior_jesse + tj), "pos"),
+           ("Donna · seed repaid", money(prior_seed + ts), ""),
+           ("Expenses · since ledger", money(te), "")])
+    cards([("Ben · since ledger", money(tb), "pos"),
+           ("Jesse · since ledger", money(tj), "pos"),
+           ("Donna · since ledger", money(ts), ""),
+           ("Gross · since ledger", money(tg), sgn(tg))])
+    st.markdown(f"<div class='kw-note'>All-time figures include payouts made before the ledger started (Ben {money(prior_ben)}, Jesse {money(prior_jesse)}, Donna {money(prior_seed)}).</div>",
+                unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- per-account
 section("Accounts")
