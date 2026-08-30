@@ -284,13 +284,14 @@ def summary_text(wk):
     lines = [f"Kona Wolf Trading — week of {wk:%b %d, %Y} (payout Fri {wk + timedelta(days=4):%b %d})", ""]
     for _, r in rows.iterrows():
         lines.append(f"{r['account']} (#{r['login']})")
-        lines.append(f"  Gross profit:      ${r['gross']:,.2f}")
-        if r["expenses"]:
-            lines.append(f"  Expenses:          ${r['expenses']:,.2f}  (reimbursed to Ben)")
+        lines.append(f"  Gross profit:        ${r['gross']:,.2f}")
         if r["seed"]:
-            lines.append(f"  Seed → {cfg[r['login']]['seed_holder']}:      ${r['seed']:,.2f}")
-        lines.append(f"  Ben receives:      ${r['ben'] + r['expenses']:,.2f}")
-        lines.append(f"  Jesse receives:    ${r['jesse']:,.2f}")
+            lines.append(f"  Seed → {cfg[r['login']]['seed_holder']}:        ${r['seed']:,.2f}")
+        lines.append(f"  Profit split each:   ${r['ben'] + r['expenses'] / 2:,.2f}")
+        if r["expenses"]:
+            lines.append(f"  Expenses (Ben card): ${r['expenses']:,.2f}  -> Jesse pays Ben half: ${r['expenses'] / 2:,.2f}")
+        lines.append(f"  Ben receives:        ${r['ben'] + r['expenses']:,.2f}")
+        lines.append(f"  Jesse receives:      ${r['jesse']:,.2f}")
         lines.append(f"  Withdraw total:    ${r['expected_withdrawal']:,.2f}")
         lines.append("")
     if len(rows) > 1:
@@ -340,13 +341,14 @@ sd = cur["seed"].sum() if not cur.empty else 0
 b = cur["ben"].sum() if not cur.empty else 0
 j = cur["jesse"].sum() if not cur.empty else 0
 half = e / 2
-share = b + half
+share = b + half          # each partner's 50% of profit after seed, before expenses
 cards([("Gross this week", money(g), sgn(g)), ("Seed → Donna", money(sd), ""),
-       ("Expenses this week", money(e), ""), ("Each partner covers", money(half), "")])
-cards([("Ben · profit share", money(share), sgn(share)), ("Ben receives", money(b + e), sgn(b + e)),
-       ("Jesse · profit share", money(share), sgn(share)), ("Jesse receives", money(j), sgn(j))])
-st.markdown(f"<div class='kw-note'>Ben receives his share {money(share)} − his half of expenses {money(half)} + the full {money(e)} reimbursed for the card = {money(b + e)}. "
-            f"Jesse receives his share {money(share)} − his half of expenses {money(half)} = {money(j)}.</div>", unsafe_allow_html=True)
+       ("Expenses on Ben's card", money(e), ""), ("Jesse → Ben for half", money(half), "")])
+cards([("Ben · profit split", money(share), sgn(share)), ("Ben receives", money(b + e), sgn(b + e)),
+       ("Jesse · profit split", money(share), sgn(share)), ("Jesse receives", money(j), sgn(j))])
+st.markdown(f"<div class='kw-note'>Profit splits 50/50 at {money(share)} each. Expenses of {money(e)} were paid on Ben's card, so Jesse's half ({money(half)}) "
+            f"moves from Jesse's share to Ben. Ben receives {money(share)} + {money(half)} = {money(b + e)}. Jesse receives {money(share)} − {money(half)} = {money(j)}.</div>",
+            unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- running totals
 prior_ben = sum(cfg[l]["prior_ben"] for l in logins)
@@ -362,7 +364,7 @@ if not tracked.empty or prior_ben or prior_jesse or prior_seed:
     cards([("Ben · all time", money(prior_ben + tb), "pos"),
            ("Jesse · all time", money(prior_jesse + tj), "pos"),
            ("Donna · seed repaid", money(prior_seed + ts), ""),
-           ("Expenses · since ledger", money(te), "")])
+           ("Expenses on Ben's card · since ledger", money(te), "")])
     cards([("Ben · since ledger", money(tb), "pos"),
            ("Jesse · since ledger", money(tj), "pos"),
            ("Donna · since ledger", money(ts), ""),
@@ -434,9 +436,12 @@ section("Payout history")
 if not allp.empty:
     hist = allp.sort_values(["week", "account"], ascending=[False, True]).head(80).copy()
     hist["Week"] = hist["week"].map(lambda w: f"{w:%b %d}")
-    show = hist[["Week", "account", "status", "gross", "expenses", "seed", "ben", "jesse", "ben_total", "expected_withdrawal", "withdrawn"]].rename(columns={
-        "account": "Account", "status": "Status", "gross": "Gross", "expenses": "Expenses", "seed": "Seed → Donna",
-        "ben": "Ben", "jesse": "Jesse", "ben_total": "Ben incl. expenses", "expected_withdrawal": "Should withdraw", "withdrawn": "Withdrawn (MT5)"})
+    hist["split_each"] = hist["ben"] + hist["expenses"] / 2
+    hist["jesse_to_ben"] = hist["expenses"] / 2
+    show = hist[["Week", "account", "status", "gross", "seed", "expenses", "split_each", "jesse_to_ben", "ben_total", "jesse", "expected_withdrawal", "withdrawn"]].rename(columns={
+        "account": "Account", "status": "Status", "gross": "Gross", "seed": "Seed → Donna", "expenses": "Expenses (Ben's card)",
+        "split_each": "Profit split each", "jesse_to_ben": "Jesse → Ben", "ben_total": "Ben receives", "jesse": "Jesse receives",
+        "expected_withdrawal": "Should withdraw", "withdrawn": "Withdrawn (MT5)"})
     st.dataframe(show, use_container_width=True, hide_index=True,
                  column_config={k: st.column_config.NumberColumn(format="$%.2f") for k in show.columns if k not in ("Week", "Account", "Status")})
 
@@ -450,7 +455,7 @@ if not allp.empty:
             if unpaid.empty:
                 st.caption("Nothing waiting to be marked.")
             else:
-                opts = {f"{r['week']:%b %d} · {r['account']} · Ben {money(r['ben'] + r['expenses'])} / Jesse {money(r['jesse'])}": (r["week"], r["login"]) for _, r in unpaid.iterrows()}
+                opts = {f"{r['week']:%b %d} · {r['account']} · Ben receives {money(r['ben'] + r['expenses'])} / Jesse receives {money(r['jesse'])}": (r["week"], r["login"]) for _, r in unpaid.iterrows()}
                 ch = st.selectbox("Unpaid weeks", list(opts.keys()))
                 note = st.text_input("Note (optional)")
                 if st.button("Mark paid", use_container_width=True):
