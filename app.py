@@ -241,10 +241,16 @@ def week_of(d):
     return d + timedelta(days=7 - wd) if wd == 6 else d - timedelta(days=wd)
 
 
-deals["time"] = pd.to_datetime(deals["time"], utc=True).dt.tz_convert(DAY_TZ)
+# Newer rows carry a measured true-UTC stamp from the collector; older rows are
+# broker-clock and get the legacy -7h correction. Days are Eastern, midnight to midnight.
+raw = pd.to_datetime(deals["time"], utc=True)
+if "time_utc" in deals.columns:
+    fixed = pd.to_datetime(deals["time_utc"], utc=True, errors="coerce")
+else:
+    fixed = pd.Series(pd.NaT, index=deals.index, dtype="datetime64[ns, UTC]")
+deals["time"] = fixed.fillna(raw - pd.Timedelta(hours=7)).dt.tz_convert(DAY_TZ)
 deals["net"] = deals["profit"].fillna(0) + deals["commission"].fillna(0) + deals["swap"].fillna(0)
-# Trading day rolls at 5pm New York: a Sunday-evening session belongs to Monday.
-deals["date"] = (deals["time"] + pd.Timedelta(hours=7)).dt.date
+deals["date"] = deals["time"].dt.date
 deals["week"] = deals["date"].map(week_of)
 trades = deals[deals["entry"].isin([1, 3]) & deals["type"].isin([0, 1])].copy()
 cash = deals[deals["type"] == 2].copy()
@@ -254,7 +260,7 @@ snaps = snaps.drop_duplicates("login") if not snaps.empty else snaps
 latest = {r["login"]: r for _, r in snaps.iterrows()}
 
 now_et = pd.Timestamp.now(DAY_TZ)
-today = (now_et + pd.Timedelta(hours=7)).date()   # current trading day (rolls at 5pm ET)
+today = now_et.date()
 this_week = week_of(today)
 now_utc = pd.Timestamp.now(tz="UTC")
 
