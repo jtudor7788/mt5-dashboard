@@ -4,8 +4,8 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
-import extra_streamlit_components as stx
 import streamlit as st
+import streamlit.components.v1 as components
 from supabase import create_client
 
 st.set_page_config(page_title="Kona Wolf Trading", page_icon="📈", layout="wide")
@@ -82,31 +82,32 @@ sb = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 
 # ---------------------------------------------------------------- login (with remember-me cookie)
 COOKIE = "kw_refresh"
-cookies = stx.CookieManager(key="kw_cookies")
 
 
 def remember(session):
-    cookies.set(COOKIE, session.refresh_token,
-                expires_at=datetime.now() + timedelta(days=30), key="kw_set")
+    """Store the refresh token as a host-wide browser cookie (30 days)."""
+    components.html(
+        f"<script>document.cookie = '{COOKIE}={session.refresh_token}; path=/; max-age=2592000; SameSite=Lax; Secure';</script>",
+        height=0)
 
 
-def browser_cookie():
-    """Read the cookie server-side on the first run - no component round-trip."""
-    try:
-        return st.context.cookies.get(COOKIE)
-    except Exception:
-        return None
+def forget():
+    components.html(
+        f"<script>document.cookie = '{COOKIE}=; path=/; max-age=0; SameSite=Lax; Secure';</script>",
+        height=0)
 
 
 if "session" not in st.session_state:
-    saved = browser_cookie()
+    try:
+        saved = st.context.cookies.get(COOKIE)
+    except Exception:
+        saved = None
     if saved:
         try:
             res = sb.auth.refresh_session(saved)
             if res and res.session:
                 st.session_state.session = res.session
                 remember(res.session)   # supabase rotates refresh tokens; save the new one
-                # no rerun needed - continue straight into the dashboard this same run
         except Exception:
             pass
 
@@ -122,7 +123,7 @@ if "session" not in st.session_state:
                 res = sb.auth.sign_in_with_password({"email": email, "password": pw})
                 st.session_state.session = res.session
                 remember(res.session)
-                time.sleep(1.0)         # give the browser time to store the cookie
+                time.sleep(1.2)         # let the browser store the cookie before reloading
                 st.rerun()
             except Exception:
                 st.error("Email or password didn't match.")
@@ -353,9 +354,9 @@ with st.sidebar:
                        "trades.csv", "text/csv", use_container_width=True)
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     if st.button("Sign out", use_container_width=True):
-        cookies.delete(COOKIE, key="kw_del")
+        forget()
         del st.session_state.session
-        time.sleep(0.6)
+        time.sleep(1.0)
         st.rerun()
 
 # ---------------------------------------------------------------- stale-data banner
