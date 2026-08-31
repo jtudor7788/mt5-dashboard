@@ -84,17 +84,23 @@ sb = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 COOKIE = "kw_refresh"
 
 
+def _set_cookie(value, max_age):
+    js = f"{COOKIE}={value}; path=/; max-age={max_age}; SameSite=Lax; Secure"
+    components.html(
+        f"""<script>
+        try {{ window.parent.document.cookie = "{js}"; }} catch (e) {{}}
+        try {{ document.cookie = "{js}"; }} catch (e) {{}}
+        </script>""",
+        height=0)
+
+
 def remember(session):
     """Store the refresh token as a host-wide browser cookie (30 days)."""
-    components.html(
-        f"<script>document.cookie = '{COOKIE}={session.refresh_token}; path=/; max-age=2592000; SameSite=Lax; Secure';</script>",
-        height=0)
+    _set_cookie(session.refresh_token, 2592000)
 
 
 def forget():
-    components.html(
-        f"<script>document.cookie = '{COOKIE}=; path=/; max-age=0; SameSite=Lax; Secure';</script>",
-        height=0)
+    _set_cookie("x", 0)
 
 
 if "session" not in st.session_state:
@@ -127,6 +133,11 @@ if "session" not in st.session_state:
                 st.rerun()
             except Exception:
                 st.error("Email or password didn't match.")
+        try:
+            seen = dict(st.context.cookies)
+            st.caption(f"debug: server sees {len(seen)} cookie(s) · {COOKIE} present: {'yes' if COOKIE in seen else 'no'}")
+        except Exception as ex:
+            st.caption(f"debug: cannot read cookies server-side ({type(ex).__name__})")
     st.stop()
 
 TOKEN = st.session_state.session.access_token
