@@ -4,8 +4,8 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
+import extra_streamlit_components as stx
 import streamlit as st
-import streamlit.components.v1 as components
 from supabase import create_client
 
 st.set_page_config(page_title="Kona Wolf Trading", page_icon="📈", layout="wide")
@@ -82,38 +82,31 @@ sb = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 
 # ---------------------------------------------------------------- login (with remember-me cookie)
 COOKIE = "kw_refresh"
-
-
-def _set_cookie(value, max_age):
-    js = f"{COOKIE}={value}; path=/; max-age={max_age}; SameSite=Lax; Secure"
-    components.html(
-        f"""<script>
-        try {{ window.parent.document.cookie = "{js}"; }} catch (e) {{}}
-        try {{ document.cookie = "{js}"; }} catch (e) {{}}
-        </script>""",
-        height=0)
+cookies = stx.CookieManager(key="kw_cookies")
 
 
 def remember(session):
-    """Store the refresh token as a host-wide browser cookie (30 days)."""
-    _set_cookie(session.refresh_token, 2592000)
-
-
-def forget():
-    _set_cookie("x", 0)
+    cookies.set(COOKIE, session.refresh_token,
+                expires_at=datetime.now() + timedelta(days=30), key="kw_set")
 
 
 if "session" not in st.session_state:
-    try:
-        saved = st.context.cookies.get(COOKIE)
-    except Exception:
-        saved = None
+    all_cookies = cookies.get_all(key="kw_all")
+    if all_cookies is None:
+        # cookie reader hasn't reported back yet - hold (max 4s) instead of showing the login form
+        started = st.session_state.setdefault("cookie_wait_start", time.time())
+        if time.time() - started < 4:
+            st.markdown("<div style='text-align:center;margin-top:35vh;color:#8A94A8;font-size:14px'>Signing in…</div>",
+                        unsafe_allow_html=True)
+            st.stop()
+    saved = (all_cookies or {}).get(COOKIE)
     if saved:
         try:
             res = sb.auth.refresh_session(saved)
             if res and res.session:
                 st.session_state.session = res.session
-                remember(res.session)   # supabase rotates refresh tokens; save the new one
+                remember(res.session)   # supabase rotates the token; the set component stays
+                                        # mounted for the whole page life, so this write is safe
         except Exception:
             pass
 
@@ -129,15 +122,12 @@ if "session" not in st.session_state:
                 res = sb.auth.sign_in_with_password({"email": email, "password": pw})
                 st.session_state.session = res.session
                 remember(res.session)
-                time.sleep(1.2)         # let the browser store the cookie before reloading
+                time.sleep(1.5)         # let the cookie write land before reloading
                 st.rerun()
             except Exception:
                 st.error("Email or password didn't match.")
-        try:
-            seen = dict(st.context.cookies)
-            st.caption(f"debug: server sees {len(seen)} cookie(s) · {COOKIE} present: {'yes' if COOKIE in seen else 'no'}")
-        except Exception as ex:
-            st.caption(f"debug: cannot read cookies server-side ({type(ex).__name__})")
+        kc = (all_cookies or {})
+        st.caption(f"debug: browser reports {len(kc)} cookie(s) · {COOKIE} present: {'yes' if COOKIE in kc else 'no'}")
     st.stop()
 
 TOKEN = st.session_state.session.access_token
@@ -365,7 +355,7 @@ with st.sidebar:
                        "trades.csv", "text/csv", use_container_width=True)
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     if st.button("Sign out", use_container_width=True):
-        forget()
+        cookies.delete(COOKIE, key="kw_del")
         del st.session_state.session
         time.sleep(1.0)
         st.rerun()
