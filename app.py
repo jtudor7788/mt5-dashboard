@@ -90,24 +90,23 @@ def remember(session):
                 expires_at=datetime.now() + timedelta(days=30), key="kw_set")
 
 
+def browser_cookie():
+    """Read the cookie server-side on the first run - no component round-trip."""
+    try:
+        return st.context.cookies.get(COOKIE)
+    except Exception:
+        return None
+
+
 if "session" not in st.session_state:
-    all_cookies = cookies.get_all(key="kw_all")
-    if all_cookies is None:
-        # cookie reader hasn't reported back yet - hold here (max 3s) instead of flashing the login form
-        started = st.session_state.setdefault("cookie_wait_start", time.time())
-        if time.time() - started < 3:
-            st.markdown("<div style='text-align:center;margin-top:35vh;color:#8A94A8;font-size:14px'>Signing in…</div>",
-                        unsafe_allow_html=True)
-            st.stop()
-    saved = (all_cookies or {}).get(COOKIE)
+    saved = browser_cookie()
     if saved:
         try:
             res = sb.auth.refresh_session(saved)
             if res and res.session:
                 st.session_state.session = res.session
-                remember(res.session)   # supabase rotates refresh tokens
-                time.sleep(0.6)         # give the browser time to store the cookie
-                st.rerun()
+                remember(res.session)   # supabase rotates refresh tokens; save the new one
+                # no rerun needed - continue straight into the dashboard this same run
         except Exception:
             pass
 
@@ -123,7 +122,7 @@ if "session" not in st.session_state:
                 res = sb.auth.sign_in_with_password({"email": email, "password": pw})
                 st.session_state.session = res.session
                 remember(res.session)
-                time.sleep(0.6)         # give the browser time to store the cookie
+                time.sleep(1.0)         # give the browser time to store the cookie
                 st.rerun()
             except Exception:
                 st.error("Email or password didn't match.")
