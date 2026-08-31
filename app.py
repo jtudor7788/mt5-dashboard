@@ -452,6 +452,20 @@ with st.sidebar:
     if st.button("↻ Refresh data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+    with st.expander("Change password"):
+        np1 = st.text_input("New password", type="password", key="np1")
+        np2 = st.text_input("Repeat it", type="password", key="np2")
+        if st.button("Update password", use_container_width=True):
+            if len(np1) < 8:
+                st.error("Use at least 8 characters.")
+            elif np1 != np2:
+                st.error("Passwords don't match.")
+            else:
+                try:
+                    sb.auth.update_user({"password": np1})
+                    st.success("Password updated.")
+                except Exception as ex:
+                    st.error(f"Couldn't update: {ex}")
     if st.button("Sign out", use_container_width=True):
         cookies.delete(COOKIE, key="kw_del")
         del st.session_state.session
