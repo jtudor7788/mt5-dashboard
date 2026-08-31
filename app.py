@@ -24,7 +24,13 @@ st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 html, body, [class*="css"] {{ font-family: 'IBM Plex Sans', sans-serif; }}
-#MainMenu, footer, header {{ visibility: hidden; }}
+#MainMenu, footer {{ visibility: hidden; }}
+header {{ visibility: hidden; height: 0; }}
+header [data-testid="stSidebarCollapsedControl"],
+header [data-testid="collapsedControl"],
+header [data-testid="stExpandSidebarButton"],
+[data-testid="stSidebarCollapsedControl"] {{ visibility: visible !important; position: fixed; top: 10px; left: 10px; z-index: 999;
+    background: {CARD}; border: 1px solid {LINE}; border-radius: 8px; }}
 .block-container {{ padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1440px; }}
 * {{ font-variant-numeric: tabular-nums; }}
 
