@@ -243,7 +243,8 @@ def week_of(d):
 
 deals["time"] = pd.to_datetime(deals["time"], utc=True).dt.tz_convert(DAY_TZ)
 deals["net"] = deals["profit"].fillna(0) + deals["commission"].fillna(0) + deals["swap"].fillna(0)
-deals["date"] = deals["time"].dt.date
+# Trading day rolls at 5pm New York: a Sunday-evening session belongs to Monday.
+deals["date"] = (deals["time"] + pd.Timedelta(hours=7)).dt.date
 deals["week"] = deals["date"].map(week_of)
 trades = deals[deals["entry"].isin([1, 3]) & deals["type"].isin([0, 1])].copy()
 cash = deals[deals["type"] == 2].copy()
@@ -253,7 +254,7 @@ snaps = snaps.drop_duplicates("login") if not snaps.empty else snaps
 latest = {r["login"]: r for _, r in snaps.iterrows()}
 
 now_et = pd.Timestamp.now(DAY_TZ)
-today = now_et.date()
+today = (now_et + pd.Timedelta(hours=7)).date()   # current trading day (rolls at 5pm ET)
 this_week = week_of(today)
 now_utc = pd.Timestamp.now(tz="UTC")
 
@@ -531,22 +532,26 @@ half = e / 2
 share = b + half
 
 wk_days = daily_all[daily_all.index >= this_week]
+month_start = today.replace(day=1)
+d_today = daily_all.get(today, 0)
+d_month = daily_all[daily_all.index >= month_start].sum()
+today_trades = trades[trades["date"] == today].sort_values("time")
 bal_hist = deals[deals["type"].isin([0, 1, 2])].groupby("date")["net"].sum().cumsum().tail(30)
 week_spark = spark(wk_days.cumsum(), GREEN if g >= 0 else RED)
-bal_spark = spark(bal_hist, BLUE)
+today_spark = spark(today_trades["net"].cumsum(), GREEN if d_today >= 0 else RED)
 
 st.markdown(f"<div class='kw-note' style='margin-bottom:10px'>Week of {this_week:%B %d} · {len(logins)} account{'s' if len(logins) != 1 else ''} · payout Friday {this_week + timedelta(days=4):%B %d}</div>", unsafe_allow_html=True)
-cards([("Gross this week", money(g), sgn(g), week_spark),
-       (f"Seed → {seed_holders}", money(sd), ""),
-       ("Expenses on Ben's card", money(e), ""),
-       ("Jesse → Ben for half", money(half), "")])
-row2 = [("Ben receives", money(b + e), sgn(b + e)),
-        ("Jesse receives", money(j), sgn(j))]
+cards([("Today", money(d_today), sgn(d_today), today_spark),
+       ("Gross this week", money(g), sgn(g), week_spark),
+       ("This month", money(d_month), sgn(d_month)),
+       (f"Seed → {seed_holders}", money(sd), "")])
+cards([("Expenses on Ben's card", money(e), ""),
+       ("Jesse → Ben for half", money(half), ""),
+       ("Ben receives", money(b + e), sgn(b + e)),
+       ("Jesse receives", money(j), sgn(j))])
 if any_kolby:
-    row2 += [("Kolby receives", money(k), sgn(k)), ("Profit split · Ben / Jesse", money(share), sgn(share))]
-else:
-    row2 += [("Ben · profit split", money(share), sgn(share)), ("Jesse · profit split", money(share), sgn(share))]
-cards(row2)
+    cards([("Kolby receives", money(k), sgn(k)),
+           ("Ben / Jesse split each", money(share), sgn(share))])
 st.markdown(f"<div class='kw-note'>Profit splits 50/50 at {money(share)} each. Expenses of {money(e)} were paid on Ben's card, so Jesse's half ({money(half)}) "
             f"moves from Jesse's share to Ben. Ben receives {money(share)} + {money(half)} = {money(b + e)}. Jesse receives {money(share)} − {money(half)} = {money(j)}.</div>",
             unsafe_allow_html=True)
