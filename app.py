@@ -9,8 +9,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from supabase import create_client
 
-LOGO_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/logo.png"
-ICON_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/apple-icon.png"
+LOGO_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/logo.png?v=3"
+ICON_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/apple-icon.png?v=3"
 
 st.set_page_config(page_title="Kona Wolf Trading", page_icon=ICON_URL, layout="wide")
 
@@ -44,7 +44,7 @@ header [data-testid="stExpandSidebarButton"],
 .kw-mast {{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;
             border-bottom:1px solid {LINE}; padding-bottom:16px; margin-bottom:20px; animation:kwfade .5s ease; }}
 .kw-brand {{ display:flex; align-items:center; gap:14px; }}
-.kw-logo {{ height:76px; width:auto; }}
+.kw-logo {{ height:60px; width:auto; }}
 .kw-mono {{ width:44px; height:44px; border:1px solid {ACCENT}; border-radius:8px; display:flex; align-items:center; justify-content:center;
             font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:17px; color:{ACCENT};
             background:linear-gradient(160deg, rgba(212,168,67,0.10), transparent 60%); letter-spacing:1px; }}
@@ -133,7 +133,7 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
   .kw-day .p {{ display:none; }}
   .kw-dow {{ font-size:9px; }}
   .kw-sess {{ display:none; }}
-  .kw-logo {{ height:58px; width:auto; }}
+  .kw-logo {{ height:42px; width:auto; }}
   div[data-testid="stHorizontalBlock"] {{ flex-wrap:nowrap !important; gap:6px !important; }}
   div[data-testid="stHorizontalBlock"] > div {{ min-width:0 !important; flex:1 1 0 !important; }}
 }}
@@ -147,7 +147,7 @@ try {{
   d.querySelectorAll("link[rel='apple-touch-icon'], link[rel='icon']").forEach(function(l) {{ l.remove(); }});
   ["apple-touch-icon", "apple-touch-icon-precomposed", "icon"].forEach(function(r) {{
     const l = d.createElement("link");
-    l.rel = r; l.sizes = "512x512"; l.href = "{ICON_URL}?v=2";
+    l.rel = r; l.sizes = "512x512"; l.href = "{ICON_URL}";
     d.head.appendChild(l);
   }});
 }} catch (e) {{}}
@@ -186,7 +186,7 @@ if "session" not in st.session_state:
 if "session" not in st.session_state:
     _, mid, _ = st.columns([1, 1.2, 1])
     with mid:
-        st.markdown(f"<div style='text-align:center;margin-bottom:10px'><img src='{LOGO_URL}' style='width:190px;max-width:70%'></div>"
+        st.markdown(f"<div style='text-align:center;margin-bottom:10px'><img src='{LOGO_URL}' style='width:340px;max-width:88%'></div>"
                     "<div class='kw-note' style='text-align:center'>Sign in to view the accounts</div>", unsafe_allow_html=True)
         email = st.text_input("Email")
         pw = st.text_input("Password", type="password")
@@ -496,8 +496,7 @@ st.markdown("<a class='kw-refresh' href='?r=1' title='Refresh data'>↻</a>", un
 st.markdown(f"""
 <div class='kw-mast'>
   <div class='kw-brand'>
-    <img src='{LOGO_URL}' class='kw-logo'>
-    <div class='kw-word'><div class='a'>KONA WOLF</div><div class='b'>TRADING</div></div>
+    <img src='{LOGO_URL}' class='kw-logo' alt='Kona Wolf Trading Company'>
   </div>
   <div class='kw-strip'>
     <div class='kw-sess'>{sess('TOKYO', tokyo)}{sess('LONDON', london)}{sess('NEW YORK', ny)}</div>
