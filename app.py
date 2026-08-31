@@ -114,6 +114,10 @@ header [data-testid="stExpandSidebarButton"],
 .kw-day.empty {{ background:transparent; border-color:transparent; }}
 .kw-monthline {{ font-family:'IBM Plex Mono', monospace; font-size:15px; margin:6px 0 10px; }}
 div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}; }}
+.kw-refresh {{ position:fixed; bottom:18px; left:14px; z-index:998; width:46px; height:46px; border-radius:50%;
+  background:{CARD}; border:1px solid {LINE}; color:{ACCENT}; display:flex; align-items:center; justify-content:center;
+  font-size:22px; text-decoration:none; box-shadow:0 4px 14px rgba(0,0,0,0.45); }}
+.kw-refresh:active {{ transform:scale(0.94); }}
 
 @media (max-width: 700px) {{
   .block-container {{ padding-left:0.8rem; padding-right:0.8rem; padding-top:0.9rem; }}
@@ -199,6 +203,10 @@ if "session" not in st.session_state:
 
 TOKEN = st.session_state.session.access_token
 sb.postgrest.auth(TOKEN)
+
+if st.query_params.get("r"):
+    st.cache_data.clear()
+    st.query_params.clear()
 
 
 # ---------------------------------------------------------------- data
@@ -441,6 +449,9 @@ with st.sidebar:
     st.download_button("Download trades (CSV)", tcsv.drop(columns=["date", "week"]).to_csv(index=False).encode(),
                        "trades.csv", "text/csv", use_container_width=True)
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+    if st.button("↻ Refresh data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
     if st.button("Sign out", use_container_width=True):
         cookies.delete(COOKIE, key="kw_del")
         del st.session_state.session
@@ -467,6 +478,7 @@ def sess(name, on):
     return f"<span class='{'on' if on else ''}'><b>{name}</b> {'●' if on else '○'}</span>"
 
 
+st.markdown("<a class='kw-refresh' href='?r=1' title='Refresh data'>↻</a>", unsafe_allow_html=True)
 st.markdown(f"""
 <div class='kw-mast'>
   <div class='kw-brand'>
