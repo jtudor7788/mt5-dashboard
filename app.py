@@ -273,6 +273,8 @@ for login in acct["login"]:
         "prior_ben": float(row.get("prior_ben") or 0),
         "prior_jesse": float(row.get("prior_jesse") or 0),
         "prior_seed": float(row.get("prior_seed") or 0),
+        "kolby_pct": float(row.get("kolby_pct") or 0),
+        "prior_kolby": float(row.get("prior_kolby") or 0),
     }
 logins = sorted(cfg, key=lambda l: (not cfg[l]["is_master"], cfg[l]["nickname"]))
 master = next((l for l in logins if cfg[l]["is_master"]), logins[0])
@@ -292,8 +294,11 @@ WEEKLY_RECURRING = (monthly * 12 + yearly) / 52
 
 if not ledger.empty:
     ledger["week"] = pd.to_datetime(ledger["week"]).dt.date
-    for c in ["gross", "expenses", "seed", "ben", "jesse"]:
-        ledger[c] = ledger[c].astype(float)
+    for c in ["gross", "expenses", "seed", "ben", "jesse", "kolby"]:
+        if c in ledger.columns:
+            ledger[c] = ledger[c].astype(float)
+        else:
+            ledger[c] = 0.0
 frozen = {(r["week"], r["login"]): r for _, r in ledger.iterrows()} if not ledger.empty else {}
 
 
@@ -313,13 +318,13 @@ def compute_payouts(login):
         key = (wk, login)
         if key in frozen:
             f = frozen[key]
-            exp, seed_pay, ben, jesse = f["expenses"], f["seed"], f["ben"], f["jesse"]
+            exp, seed_pay, ben, jesse, kolby = f["expenses"], f["seed"], f["ben"], f["jesse"], f.get("kolby", 0.0)
             gross = f["gross"]
             seed_left = max(seed_left - seed_pay, 0.0)
             carry = 0.0
             status = "paid"
         elif not tracked:
-            exp = seed_pay = ben = jesse = 0.0
+            exp = seed_pay = ben = jesse = kolby = 0.0
             status = "before tracking"
         else:
             exp = 0.0
@@ -327,12 +332,13 @@ def compute_payouts(login):
                 exp = WEEKLY_RECURRING + oneoff.loc[oneoff["week"] == wk, "amount"].sum()
             base = gross - exp + carry
             if base <= 0:
-                carry, seed_pay, ben, jesse = base, 0.0, 0.0, 0.0
+                carry, seed_pay, ben, jesse, kolby = base, 0.0, 0.0, 0.0, 0.0
             else:
                 carry = 0.0
+                kolby = base * c["kolby_pct"]
                 seed_pay = min(base * 0.5, seed_left)
                 seed_left -= seed_pay
-                rest = base - seed_pay
+                rest = base - kolby - seed_pay
                 ben = jesse = rest / 2
             if wk == this_week:
                 status = "in progress"
@@ -343,7 +349,7 @@ def compute_payouts(login):
             else:
                 status = "✓ matched"
         if status == "paid":
-            expected = ben + jesse + exp + seed_pay
+            expected = ben + jesse + kolby + exp + seed_pay
             if withdrawn == 0 and today < fri + timedelta(days=7):
                 status = "paid · pending"
             elif abs(withdrawn - expected) > MATCH_TOLERANCE:
@@ -351,8 +357,8 @@ def compute_payouts(login):
             else:
                 status = "paid ✓"
         out.append({"week": wk, "login": login, "account": c["nickname"], "gross": gross, "expenses": exp,
-                    "seed": seed_pay, "ben": ben, "jesse": jesse, "ben_total": ben + exp,
-                    "expected_withdrawal": ben + jesse + exp + seed_pay, "withdrawn": withdrawn,
+                    "seed": seed_pay, "ben": ben, "jesse": jesse, "kolby": kolby, "ben_total": ben + exp,
+                    "expected_withdrawal": ben + jesse + kolby + exp + seed_pay, "withdrawn": withdrawn,
                     "status": status, "tracked": tracked, "in_progress": wk == this_week, "frozen": key in frozen})
     return pd.DataFrame(out), seed_left
 
@@ -417,11 +423,13 @@ def summary_text(wk):
         lines.append(f"  Gross profit:        ${r['gross']:,.2f}")
         if r["seed"]:
             lines.append(f"  Seed -> {cfg[r['login']]['seed_holder']}:       ${r['seed']:,.2f}")
-        lines.append(f"  Profit split each:   ${r['ben'] + r['expenses'] / 2:,.2f}")
+        lines.append(f"  Ben/Jesse split each: ${r['ben'] + r['expenses'] / 2:,.2f}")
         if r["expenses"]:
             lines.append(f"  Expenses (Ben card): ${r['expenses']:,.2f}  -> Jesse pays Ben half: ${r['expenses'] / 2:,.2f}")
         lines.append(f"  Ben receives:        ${r['ben'] + r['expenses']:,.2f}")
         lines.append(f"  Jesse receives:      ${r['jesse']:,.2f}")
+        if r["kolby"]:
+            lines.append(f"  Kolby receives:      ${r['kolby']:,.2f}")
         lines.append(f"  Withdraw total:      ${r['expected_withdrawal']:,.2f}")
         lines.append("")
     if len(rows) > 1:
@@ -514,6 +522,9 @@ if not fresh:
 g = cur["gross"].sum() if not cur.empty else 0
 e = cur["expenses"].sum() if not cur.empty else 0
 sd = cur["seed"].sum() if not cur.empty else 0
+k = cur["kolby"].sum() if not cur.empty else 0
+any_kolby = any(cfg[l]["kolby_pct"] > 0 for l in logins)
+seed_holders = " / ".join(sorted({cfg[l]["seed_holder"] for l in logins if cfg[l]["seed"] > 0 and seed_left[l] > 0})) or "—"
 b = cur["ben"].sum() if not cur.empty else 0
 j = cur["jesse"].sum() if not cur.empty else 0
 half = e / 2
@@ -526,13 +537,16 @@ bal_spark = spark(bal_hist, BLUE)
 
 st.markdown(f"<div class='kw-note' style='margin-bottom:10px'>Week of {this_week:%B %d} · {len(logins)} account{'s' if len(logins) != 1 else ''} · payout Friday {this_week + timedelta(days=4):%B %d}</div>", unsafe_allow_html=True)
 cards([("Gross this week", money(g), sgn(g), week_spark),
-       ("Seed → Donna", money(sd), ""),
+       (f"Seed → {seed_holders}", money(sd), ""),
        ("Expenses on Ben's card", money(e), ""),
        ("Jesse → Ben for half", money(half), "")])
-cards([("Ben · profit split", money(share), sgn(share)),
-       ("Ben receives", money(b + e), sgn(b + e)),
-       ("Jesse · profit split", money(share), sgn(share)),
-       ("Jesse receives", money(j), sgn(j))])
+row2 = [("Ben receives", money(b + e), sgn(b + e)),
+        ("Jesse receives", money(j), sgn(j))]
+if any_kolby:
+    row2 += [("Kolby receives", money(k), sgn(k)), ("Profit split · Ben / Jesse", money(share), sgn(share))]
+else:
+    row2 += [("Ben · profit split", money(share), sgn(share)), ("Jesse · profit split", money(share), sgn(share))]
+cards(row2)
 st.markdown(f"<div class='kw-note'>Profit splits 50/50 at {money(share)} each. Expenses of {money(e)} were paid on Ben's card, so Jesse's half ({money(half)}) "
             f"moves from Jesse's share to Ben. Ben receives {money(share)} + {money(half)} = {money(b + e)}. Jesse receives {money(share)} − {money(half)} = {money(j)}.</div>",
             unsafe_allow_html=True)
@@ -541,6 +555,7 @@ st.markdown(f"<div class='kw-note'>Profit splits 50/50 at {money(share)} each. E
 prior_ben = sum(cfg[l]["prior_ben"] for l in logins)
 prior_jesse = sum(cfg[l]["prior_jesse"] for l in logins)
 prior_seed = sum(cfg[l]["prior_seed"] for l in logins)
+prior_kolby = sum(cfg[l]["prior_kolby"] for l in logins)
 if not tracked.empty or prior_ben or prior_jesse or prior_seed:
     section("Totals to date")
     tb = (tracked["ben"] + tracked["expenses"]).sum() if not tracked.empty else 0
@@ -550,12 +565,15 @@ if not tracked.empty or prior_ben or prior_jesse or prior_seed:
     tg = tracked["gross"].sum() if not tracked.empty else 0
     cards([("Ben · all time", money(prior_ben + tb), "pos"),
            ("Jesse · all time", money(prior_jesse + tj), "pos"),
-           ("Donna · seed repaid", money(prior_seed + ts_), ""),
+           ("Seed repaid to date", money(prior_seed + ts_), ""),
            ("Expenses on Ben's card · since ledger", money(te), "")])
-    cards([("Ben · since ledger", money(tb), "pos"),
-           ("Jesse · since ledger", money(tj), "pos"),
-           ("Donna · since ledger", money(ts_), ""),
-           ("Gross · since ledger", money(tg), sgn(tg))])
+    tk = tracked["kolby"].sum() if not tracked.empty else 0
+    r = [("Ben · since ledger", money(tb), "pos"),
+         ("Jesse · since ledger", money(tj), "pos")]
+    if any_kolby or tk or prior_kolby:
+        r.append(("Kolby · all time", money(prior_kolby + tk), "pos"))
+    r.append(("Gross · since ledger", money(tg), sgn(tg)))
+    cards(r)
     st.markdown(f"<div class='kw-note'>All-time figures include payouts made before the ledger started (Ben {money(prior_ben)}, Jesse {money(prior_jesse)}, Donna {money(prior_seed)}).</div>",
                 unsafe_allow_html=True)
 
@@ -652,10 +670,10 @@ st.markdown("<div class='kw-note'>Tap the copy icon in the top-right of the box,
 # ---------------------------------------------------------------- weekly payouts chart
 section("Weekly payouts")
 if not tracked.empty:
-    wk_sum = tracked.groupby("week")[["jesse", "ben", "seed", "expenses"]].sum().sort_index().tail(16)
+    wk_sum = tracked.groupby("week")[["jesse", "ben", "kolby", "seed", "expenses"]].sum().sort_index().tail(16)
     x = [f"{w:%b %d}" for w in wk_sum.index]
     fig = go.Figure()
-    for col, name, color in [("jesse", "Jesse", BLUE), ("ben", "Ben", GREEN), ("seed", "Seed → Donna", PURPLE), ("expenses", "Expenses", GREY)]:
+    for col, name, color in [("jesse", "Jesse", BLUE), ("ben", "Ben", GREEN), ("kolby", "Kolby", ACCENT), ("seed", "Seed", PURPLE), ("expenses", "Expenses", GREY)]:
         fig.add_bar(x=x, y=wk_sum[col], name=name, marker_color=color, hovertemplate="%{x}<br>" + name + " %{y:,.0f}<extra></extra>")
     st.plotly_chart(chart_layout(fig, 300, legend=True), use_container_width=True, config={"displayModeBar": False})
 else:
@@ -668,9 +686,9 @@ if not allp.empty:
     hist["Week"] = hist["week"].map(lambda w: f"{w:%b %d}")
     hist["split_each"] = hist["ben"] + hist["expenses"] / 2
     hist["jesse_to_ben"] = hist["expenses"] / 2
-    show = hist[["Week", "account", "status", "gross", "seed", "expenses", "split_each", "jesse_to_ben", "ben_total", "jesse", "expected_withdrawal", "withdrawn"]].rename(columns={
-        "account": "Account", "status": "Status", "gross": "Gross", "seed": "Seed → Donna", "expenses": "Expenses (Ben's card)",
-        "split_each": "Profit split each", "jesse_to_ben": "Jesse → Ben", "ben_total": "Ben receives", "jesse": "Jesse receives",
+    show = hist[["Week", "account", "status", "gross", "seed", "expenses", "jesse_to_ben", "ben_total", "jesse", "kolby", "expected_withdrawal", "withdrawn"]].rename(columns={
+        "account": "Account", "status": "Status", "gross": "Gross", "seed": "Seed", "expenses": "Expenses (Ben's card)",
+        "jesse_to_ben": "Jesse → Ben", "ben_total": "Ben receives", "jesse": "Jesse receives", "kolby": "Kolby receives",
         "expected_withdrawal": "Should withdraw", "withdrawn": "Withdrawn (MT5)"})
     st.dataframe(show, use_container_width=True, hide_index=True,
                  column_config={k: st.column_config.NumberColumn(format="dollar") for k in show.columns if k not in ("Week", "Account", "Status")})
@@ -692,7 +710,7 @@ if not allp.empty:
                     wk_, lg_ = opts[ch]
                     r = unpaid[(unpaid["week"] == wk_) & (unpaid["login"] == lg_)].iloc[0]
                     sb.table("payouts").upsert({"week": wk_.isoformat(), "login": int(lg_), "gross": float(r["gross"]), "expenses": float(r["expenses"]),
-                                                "seed": float(r["seed"]), "ben": float(r["ben"]), "jesse": float(r["jesse"]),
+                                                "seed": float(r["seed"]), "ben": float(r["ben"]), "jesse": float(r["jesse"]), "kolby": float(r["kolby"]),
                                                 "paid_on": today.isoformat(), "note": note or None}).execute()
                     st.cache_data.clear()
                     st.rerun()
