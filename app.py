@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
+import extra_streamlit_components as stx
 import streamlit as st
 from supabase import create_client
 
@@ -78,7 +79,28 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
 
 sb = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 
-# ---------------------------------------------------------------- login
+# ---------------------------------------------------------------- login (with remember-me cookie)
+COOKIE = "kw_refresh"
+cookies = stx.CookieManager(key="kw_cookies")
+
+
+def remember(session):
+    cookies.set(COOKIE, session.refresh_token,
+                expires_at=datetime.now() + timedelta(days=30), key="kw_set")
+
+
+if "session" not in st.session_state:
+    saved = cookies.get(COOKIE)
+    if saved:
+        try:
+            res = sb.auth.refresh_session(saved)
+            if res and res.session:
+                st.session_state.session = res.session
+                remember(res.session)   # supabase rotates refresh tokens
+                st.rerun()
+        except Exception:
+            pass
+
 if "session" not in st.session_state:
     _, mid, _ = st.columns([1, 1.2, 1])
     with mid:
@@ -90,6 +112,7 @@ if "session" not in st.session_state:
             try:
                 res = sb.auth.sign_in_with_password({"email": email, "password": pw})
                 st.session_state.session = res.session
+                remember(res.session)
                 st.rerun()
             except Exception:
                 st.error("Email or password didn't match.")
@@ -320,6 +343,7 @@ with st.sidebar:
                        "trades.csv", "text/csv", use_container_width=True)
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     if st.button("Sign out", use_container_width=True):
+        cookies.delete(COOKIE, key="kw_del")
         del st.session_state.session
         st.rerun()
 
