@@ -9,7 +9,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from supabase import create_client
 
-st.set_page_config(page_title="Kona Wolf Trading", page_icon="📈", layout="wide")
+LOGO_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/logo.png"
+ICON_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/apple-icon.png"
+
+st.set_page_config(page_title="Kona Wolf Trading", page_icon=ICON_URL, layout="wide")
 
 DAY_TZ = "America/New_York"
 STALE_MINUTES = 20
@@ -133,7 +136,19 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
 </style>
 """, unsafe_allow_html=True)
 
-LOGO_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/logo.png"
+import streamlit.components.v1 as _components
+_components.html(f"""<script>
+try {{
+  const d = window.parent.document;
+  if (!d.querySelector("link[rel='apple-touch-icon']")) {{
+    ["apple-touch-icon", "icon"].forEach(function(r) {{
+      const l = d.createElement("link");
+      l.rel = r; l.sizes = "512x512"; l.href = "{ICON_URL}";
+      d.head.appendChild(l);
+    }});
+  }}
+}} catch (e) {{}}
+</script>""", height=0)
 
 sb = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 
