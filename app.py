@@ -1,4 +1,5 @@
 import calendar
+import time
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -97,6 +98,7 @@ if "session" not in st.session_state:
             if res and res.session:
                 st.session_state.session = res.session
                 remember(res.session)   # supabase rotates refresh tokens
+                time.sleep(0.6)         # give the browser time to store the cookie
                 st.rerun()
         except Exception:
             pass
@@ -113,6 +115,7 @@ if "session" not in st.session_state:
                 res = sb.auth.sign_in_with_password({"email": email, "password": pw})
                 st.session_state.session = res.session
                 remember(res.session)
+                time.sleep(0.6)         # give the browser time to store the cookie
                 st.rerun()
             except Exception:
                 st.error("Email or password didn't match.")
@@ -345,6 +348,7 @@ with st.sidebar:
     if st.button("Sign out", use_container_width=True):
         cookies.delete(COOKIE, key="kw_del")
         del st.session_state.session
+        time.sleep(0.6)
         st.rerun()
 
 # ---------------------------------------------------------------- stale-data banner
