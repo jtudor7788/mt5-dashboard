@@ -139,14 +139,13 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
 import streamlit.components.v1 as _components
 _components.html(f"""<script>
 try {{
-  const d = window.parent.document;
-  if (!d.querySelector("link[rel='apple-touch-icon']")) {{
-    ["apple-touch-icon", "icon"].forEach(function(r) {{
-      const l = d.createElement("link");
-      l.rel = r; l.sizes = "512x512"; l.href = "{ICON_URL}";
-      d.head.appendChild(l);
-    }});
-  }}
+  const d = (window.top || window.parent).document;
+  d.querySelectorAll("link[rel='apple-touch-icon'], link[rel='icon']").forEach(function(l) {{ l.remove(); }});
+  ["apple-touch-icon", "apple-touch-icon-precomposed", "icon"].forEach(function(r) {{
+    const l = d.createElement("link");
+    l.rel = r; l.sizes = "512x512"; l.href = "{ICON_URL}?v=2";
+    d.head.appendChild(l);
+  }});
 }} catch (e) {{}}
 </script>""", height=0)
 
