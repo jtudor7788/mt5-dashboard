@@ -41,6 +41,7 @@ header [data-testid="stExpandSidebarButton"],
 .kw-mast {{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;
             border-bottom:1px solid {LINE}; padding-bottom:16px; margin-bottom:20px; animation:kwfade .5s ease; }}
 .kw-brand {{ display:flex; align-items:center; gap:14px; }}
+.kw-logo {{ height:76px; width:auto; }}
 .kw-mono {{ width:44px; height:44px; border:1px solid {ACCENT}; border-radius:8px; display:flex; align-items:center; justify-content:center;
             font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:17px; color:{ACCENT};
             background:linear-gradient(160deg, rgba(212,168,67,0.10), transparent 60%); letter-spacing:1px; }}
@@ -125,6 +126,7 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
   .kw-day .p {{ display:none; }}
   .kw-dow {{ font-size:9px; }}
   .kw-sess {{ display:none; }}
+  .kw-logo {{ height:58px; width:auto; }}
   div[data-testid="stHorizontalBlock"] {{ flex-wrap:nowrap !important; gap:6px !important; }}
   div[data-testid="stHorizontalBlock"] > div {{ min-width:0 !important; flex:1 1 0 !important; }}
 }}
@@ -454,7 +456,7 @@ def sess(name, on):
 st.markdown(f"""
 <div class='kw-mast'>
   <div class='kw-brand'>
-    <img src='{LOGO_URL}' style='height:62px'>
+    <img src='{LOGO_URL}' class='kw-logo'>
     <div class='kw-word'><div class='a'>KONA WOLF</div><div class='b'>TRADING</div></div>
   </div>
   <div class='kw-strip'>
