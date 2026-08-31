@@ -1,56 +1,102 @@
 import calendar
+import math
 import time
 from datetime import date, datetime, timedelta
 
+import extra_streamlit_components as stx
 import pandas as pd
 import plotly.graph_objects as go
-import extra_streamlit_components as stx
 import streamlit as st
 from supabase import create_client
 
 st.set_page_config(page_title="Kona Wolf Trading", page_icon="📈", layout="wide")
 
-DAY_TZ = "America/New_York"   # clock that decides which day/week a trade belongs to
-STALE_MINUTES = 20            # warn if the VPS hasn't synced in this long
-MATCH_TOLERANCE = 5.00        # $ difference allowed between expected and actual withdrawal
+DAY_TZ = "America/New_York"
+STALE_MINUTES = 20
+MATCH_TOLERANCE = 5.00
 
 # ---------------------------------------------------------------- palette
-CARD, LINE = "#121A2B", "#1E2A40"
-TEXT, MUTED, ACCENT = "#E6EBF5", "#8A94A8", "#F0B429"
+CARD, CARD2, LINE = "#111827", "#0D1420", "#1E2A40"
+TEXT, MUTED, ACCENT = "#E8EDF7", "#7C8698", "#D4A843"
 GREEN, RED, BLUE, PURPLE, GREY = "#2FBF71", "#E5484D", "#5B9CF6", "#A78BFA", "#64748B"
 
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 html, body, [class*="css"] {{ font-family: 'IBM Plex Sans', sans-serif; }}
 #MainMenu, footer, header {{ visibility: hidden; }}
-.block-container {{ padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1400px; }}
-.kw-head {{ display:flex; align-items:baseline; gap:14px; margin-bottom:4px; flex-wrap:wrap; }}
-.kw-title {{ font-size:24px; font-weight:600; color:{TEXT}; }}
-.kw-sub {{ color:{MUTED}; font-size:13px; margin-bottom:16px; }}
-.kw-note {{ color:{MUTED}; font-size:12px; margin:0 0 6px; line-height:1.5; }}
-.kw-section {{ font-size:15px; font-weight:600; color:{TEXT}; margin:24px 0 10px; }}
+.block-container {{ padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1440px; }}
+* {{ font-variant-numeric: tabular-nums; }}
+
+@keyframes kwfade {{ from {{ opacity:0; transform:translateY(4px); }} to {{ opacity:1; transform:none; }} }}
+@keyframes kwpulse {{ 0% {{ box-shadow:0 0 0 0 rgba(47,191,113,0.5); }} 70% {{ box-shadow:0 0 0 7px rgba(47,191,113,0); }} 100% {{ box-shadow:0 0 0 0 rgba(47,191,113,0); }} }}
+
+/* masthead */
+.kw-mast {{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;
+            border-bottom:1px solid {LINE}; padding-bottom:16px; margin-bottom:20px; animation:kwfade .5s ease; }}
+.kw-brand {{ display:flex; align-items:center; gap:14px; }}
+.kw-mono {{ width:44px; height:44px; border:1px solid {ACCENT}; border-radius:8px; display:flex; align-items:center; justify-content:center;
+            font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:17px; color:{ACCENT};
+            background:linear-gradient(160deg, rgba(212,168,67,0.10), transparent 60%); letter-spacing:1px; }}
+.kw-word {{ line-height:1.15; }}
+.kw-word .a {{ font-size:19px; font-weight:600; color:{TEXT}; letter-spacing:0.14em; }}
+.kw-word .b {{ font-size:10.5px; color:{MUTED}; letter-spacing:0.42em; }}
+.kw-strip {{ display:flex; align-items:center; gap:22px; flex-wrap:wrap; }}
+.kw-live {{ display:flex; align-items:center; gap:8px; font-size:12px; color:{MUTED}; }}
+.kw-dot {{ width:8px; height:8px; border-radius:50%; background:{GREEN}; animation:kwpulse 2.2s infinite; }}
+.kw-dot.bad {{ background:{RED}; animation:none; }}
+.kw-sess {{ display:flex; gap:14px; font-size:11px; letter-spacing:0.1em; color:{MUTED}; }}
+.kw-sess span b {{ font-weight:600; }}
+.kw-sess .on {{ color:{GREEN}; }}
+.kw-count {{ font-family:'IBM Plex Mono',monospace; font-size:12px; color:{TEXT};
+             border:1px solid {LINE}; border-radius:8px; padding:7px 12px; background:{CARD2}; }}
+.kw-count b {{ color:{ACCENT}; font-weight:600; }}
+
+.kw-note {{ color:{MUTED}; font-size:12px; margin:0 0 6px; line-height:1.55; }}
+.kw-section {{ font-size:13px; font-weight:600; color:{MUTED}; letter-spacing:0.18em; text-transform:uppercase; margin:30px 0 12px; }}
 .kw-alert {{ background:#3A1B1F; border:1px solid #6A2A2A; color:#F5B5B8; border-radius:10px; padding:10px 14px; font-size:13px; margin-bottom:12px; }}
-.kw-grid {{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:10px; margin-bottom:10px; }}
-.kw-card {{ background:{CARD}; border:1px solid {LINE}; border-radius:10px; padding:12px 14px 10px; min-width:0; }}
-.kw-label {{ color:{MUTED}; font-size:10.5px; letter-spacing:0.07em; text-transform:uppercase; margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-.kw-value {{ font-family:'IBM Plex Mono', monospace; font-size:20px; font-weight:600; color:{TEXT}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-.kw-value.small {{ font-size:16px; }}
+
+/* cards */
+.kw-grid {{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:12px; }}
+.kw-card {{ background:linear-gradient(180deg, rgba(255,255,255,0.025), transparent 34%), {CARD};
+            border:1px solid {LINE}; border-top-color:#28374F; border-radius:12px; padding:14px 16px 12px;
+            min-width:0; animation:kwfade .5s ease; }}
+.kw-label {{ color:{MUTED}; font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:6px;
+             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.kw-value {{ font-family:'IBM Plex Mono', monospace; font-size:23px; font-weight:600; color:{TEXT};
+             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.kw-value.small {{ font-size:17px; }}
 .kw-value.pos {{ color:{GREEN}; }}  .kw-value.neg {{ color:{RED}; }}
-.kw-acct {{ background:{CARD}; border:1px solid {LINE}; border-radius:10px; padding:14px 16px; margin-bottom:10px; }}
+.kw-spark {{ margin-top:8px; height:26px; }}
+
+/* account panels */
+.kw-acct {{ background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent 30%), {CARD};
+            border:1px solid {LINE}; border-radius:12px; padding:16px 18px; margin-bottom:12px; animation:kwfade .5s ease; }}
 .kw-acct .name {{ font-size:15px; font-weight:600; color:{TEXT}; }}
-.kw-acct .tag {{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:{ACCENT}; margin-left:8px; }}
-.kw-acct .row {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px 18px; margin-top:10px; }}
-.kw-acct .k {{ color:{MUTED}; font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; }}
+.kw-acct .tag {{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:{ACCENT}; margin-left:8px; letter-spacing:0.08em; }}
+.kw-acct .row {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(122px, 1fr)); gap:12px 18px; margin-top:12px; }}
+.kw-acct .k {{ color:{MUTED}; font-size:10.5px; letter-spacing:0.08em; text-transform:uppercase; }}
 .kw-acct .v {{ font-family:'IBM Plex Mono', monospace; font-size:17px; font-weight:600; color:{TEXT}; margin-top:2px; white-space:nowrap; }}
 .kw-acct .v.pos {{ color:{GREEN}; }} .kw-acct .v.neg {{ color:{RED}; }}
 .kw-bar {{ height:6px; background:{LINE}; border-radius:3px; margin-top:8px; overflow:hidden; }}
-.kw-bar > div {{ height:100%; background:{PURPLE}; }}
-.kw-cal {{ display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:6px; }}
-.kw-dow {{ text-align:center; color:{MUTED}; font-size:10.5px; letter-spacing:0.07em; text-transform:uppercase; padding-bottom:4px; }}
-.kw-day {{ border-radius:8px; padding:8px 4px; min-height:78px; text-align:center; font-family:'IBM Plex Mono', monospace; border:1px solid {LINE}; min-width:0; }}
+.kw-bar > div {{ height:100%; background:linear-gradient(90deg,{PURPLE},{BLUE}); }}
+
+/* monthly returns grid */
+.kw-mret {{ overflow-x:auto; border:1px solid {LINE}; border-radius:12px; background:{CARD}; animation:kwfade .5s ease; }}
+.kw-mret table {{ border-collapse:collapse; width:100%; min-width:760px; font-family:'IBM Plex Mono',monospace; font-size:12.5px; }}
+.kw-mret th {{ color:{MUTED}; font-weight:500; letter-spacing:0.08em; font-size:10.5px; padding:10px 8px; text-align:right; border-bottom:1px solid {LINE}; }}
+.kw-mret th:first-child, .kw-mret td:first-child {{ text-align:left; padding-left:16px; color:{TEXT}; }}
+.kw-mret td {{ padding:9px 8px; text-align:right; border-bottom:1px solid rgba(30,42,64,0.5); }}
+.kw-mret tr:last-child td {{ border-bottom:none; }}
+.kw-mret td.ytd {{ font-weight:600; border-left:1px solid {LINE}; }}
+
+/* calendar */
+.kw-cal {{ display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:7px; }}
+.kw-dow {{ text-align:center; color:{MUTED}; font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; padding-bottom:5px; }}
+.kw-day {{ border-radius:9px; padding:8px 4px; min-height:80px; text-align:center; font-family:'IBM Plex Mono', monospace;
+           border:1px solid {LINE}; min-width:0; }}
 .kw-day .n {{ font-size:11px; color:{MUTED}; }}
-.kw-day .v {{ font-size:14px; font-weight:600; margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.kw-day .v {{ font-size:14px; font-weight:600; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .kw-day .p {{ font-size:10.5px; opacity:0.8; white-space:nowrap; }}
 .kw-day.pos {{ background:#12352A; border-color:#1F5A45; color:{GREEN}; }}
 .kw-day.neg {{ background:#3A1B1F; border-color:#6A2A2A; color:{RED}; }}
@@ -58,12 +104,12 @@ html, body, [class*="css"] {{ font-family: 'IBM Plex Sans', sans-serif; }}
 .kw-day.empty {{ background:transparent; border-color:transparent; }}
 .kw-monthline {{ font-family:'IBM Plex Mono', monospace; font-size:15px; margin:6px 0 10px; }}
 div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}; }}
+
 @media (max-width: 700px) {{
-  .block-container {{ padding-left:0.8rem; padding-right:0.8rem; padding-top:1rem; }}
-  .kw-title {{ font-size:20px; }}
-  .kw-grid {{ grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; }}
-  .kw-card {{ padding:10px 12px 8px; }}
-  .kw-value {{ font-size:17px; }}  .kw-value.small {{ font-size:14px; }}
+  .block-container {{ padding-left:0.8rem; padding-right:0.8rem; padding-top:0.9rem; }}
+  .kw-grid {{ grid-template-columns:repeat(2, minmax(0,1fr)); gap:9px; }}
+  .kw-card {{ padding:11px 13px 9px; }}
+  .kw-value {{ font-size:18px; }}  .kw-value.small {{ font-size:14px; }}
   .kw-acct .row {{ grid-template-columns:repeat(2, minmax(0,1fr)); }}
   .kw-acct .v {{ font-size:15px; }}
   .kw-cal {{ gap:3px; }}
@@ -72,6 +118,7 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
   .kw-day .v {{ font-size:10.5px; margin-top:3px; }}
   .kw-day .p {{ display:none; }}
   .kw-dow {{ font-size:9px; }}
+  .kw-sess {{ display:none; }}
   div[data-testid="stHorizontalBlock"] {{ flex-wrap:nowrap !important; gap:6px !important; }}
   div[data-testid="stHorizontalBlock"] > div {{ min-width:0 !important; flex:1 1 0 !important; }}
 }}
@@ -93,10 +140,9 @@ def remember(session):
 if "session" not in st.session_state:
     all_cookies = cookies.get_all(key="kw_all")
     if all_cookies is None:
-        # cookie reader hasn't reported back yet - hold (max 4s) instead of showing the login form
         started = st.session_state.setdefault("cookie_wait_start", time.time())
         if time.time() - started < 4:
-            st.markdown("<div style='text-align:center;margin-top:35vh;color:#8A94A8;font-size:14px'>Signing in…</div>",
+            st.markdown("<div style='text-align:center;margin-top:35vh;color:#7C8698;font-size:14px'>Signing in…</div>",
                         unsafe_allow_html=True)
             st.stop()
     saved = (all_cookies or {}).get(COOKIE)
@@ -105,16 +151,16 @@ if "session" not in st.session_state:
             res = sb.auth.refresh_session(saved)
             if res and res.session:
                 st.session_state.session = res.session
-                remember(res.session)   # supabase rotates the token; the set component stays
-                                        # mounted for the whole page life, so this write is safe
+                remember(res.session)
         except Exception:
             pass
 
 if "session" not in st.session_state:
     _, mid, _ = st.columns([1, 1.2, 1])
     with mid:
-        st.markdown("<div class='kw-head'><span class='kw-title'>Kona Wolf Trading</span></div>"
-                    "<div class='kw-sub'>Sign in to view the accounts</div>", unsafe_allow_html=True)
+        st.markdown("<div class='kw-brand' style='margin-bottom:6px'><div class='kw-mono'>KW</div>"
+                    "<div class='kw-word'><div class='a'>KONA WOLF</div><div class='b'>TRADING</div></div></div>"
+                    "<div class='kw-note'>Sign in to view the accounts</div>", unsafe_allow_html=True)
         email = st.text_input("Email")
         pw = st.text_input("Password", type="password")
         if st.button("Sign in", use_container_width=True):
@@ -122,12 +168,10 @@ if "session" not in st.session_state:
                 res = sb.auth.sign_in_with_password({"email": email, "password": pw})
                 st.session_state.session = res.session
                 remember(res.session)
-                time.sleep(1.5)         # let the cookie write land before reloading
+                time.sleep(1.5)
                 st.rerun()
             except Exception:
                 st.error("Email or password didn't match.")
-        kc = (all_cookies or {})
-        st.caption(f"debug: browser reports {len(kc)} cookie(s) · {COOKIE} present: {'yes' if COOKIE in kc else 'no'}")
     st.stop()
 
 TOKEN = st.session_state.session.access_token
@@ -177,7 +221,8 @@ withdrawals = cash[cash["net"] < 0]
 snaps = snaps.drop_duplicates("login") if not snaps.empty else snaps
 latest = {r["login"]: r for _, r in snaps.iterrows()}
 
-today = datetime.now(pd.Timestamp.now(DAY_TZ).tz).date()
+now_et = pd.Timestamp.now(DAY_TZ)
+today = now_et.date()
 this_week = week_of(today)
 now_utc = pd.Timestamp.now(tz="UTC")
 
@@ -200,6 +245,7 @@ for login in acct["login"]:
     }
 logins = sorted(cfg, key=lambda l: (not cfg[l]["is_master"], cfg[l]["nickname"]))
 master = next((l for l in logins if cfg[l]["is_master"]), logins[0])
+BASE_TOTAL = sum(cfg[l]["base"] for l in logins)
 
 if not expenses.empty:
     expenses["spent_on"] = pd.to_datetime(expenses["spent_on"]).dt.date
@@ -287,6 +333,8 @@ allp = pd.concat(payouts.values(), ignore_index=True) if payouts else pd.DataFra
 cur = allp[allp["week"] == this_week] if not allp.empty else pd.DataFrame()
 tracked = allp[allp["tracked"]] if not allp.empty else pd.DataFrame()
 
+daily_all = trades.groupby("date")["net"].sum().sort_index()
+
 
 # ---------------------------------------------------------------- helpers
 def money(v):
@@ -297,8 +345,24 @@ def sgn(v):
     return "pos" if v > 0 else ("neg" if v < 0 else "")
 
 
+def spark(values, color=BLUE, w=120, h=24):
+    vals = [float(v) for v in values if v == v]
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    rng = (hi - lo) or 1
+    pts = " ".join(f"{i / (len(vals) - 1) * w:.1f},{h - (v - lo) / rng * (h - 3) - 1.5:.1f}" for i, v in enumerate(vals))
+    return (f"<div class='kw-spark'><svg width='100%' height='{h}' viewBox='0 0 {w} {h}' preserveAspectRatio='none'>"
+            f"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'/>"
+            f"</svg></div>")
+
+
 def cards(items):
-    html = "".join(f"<div class='kw-card'><div class='kw-label'>{l}</div><div class='kw-value {c}'>{v}</div></div>" for l, v, c in items)
+    html = ""
+    for it in items:
+        l, v, c = it[0], it[1], it[2]
+        sp = it[3] if len(it) > 3 else ""
+        html += f"<div class='kw-card'><div class='kw-label'>{l}</div><div class='kw-value {c}'>{v}</div>{sp}</div>"
     st.markdown(f"<div class='kw-grid'>{html}</div>", unsafe_allow_html=True)
 
 
@@ -316,21 +380,21 @@ def chart_layout(fig, height, legend=False):
 
 def summary_text(wk):
     rows = allp[(allp["week"] == wk)]
-    lines = [f"Kona Wolf Trading — week of {wk:%b %d, %Y} (payout Fri {wk + timedelta(days=4):%b %d})", ""]
+    lines = [f"Kona Wolf Trading - week of {wk:%b %d, %Y} (payout Fri {wk + timedelta(days=4):%b %d})", ""]
     for _, r in rows.iterrows():
         lines.append(f"{r['account']} (#{r['login']})")
         lines.append(f"  Gross profit:        ${r['gross']:,.2f}")
         if r["seed"]:
-            lines.append(f"  Seed → {cfg[r['login']]['seed_holder']}:        ${r['seed']:,.2f}")
+            lines.append(f"  Seed -> {cfg[r['login']]['seed_holder']}:       ${r['seed']:,.2f}")
         lines.append(f"  Profit split each:   ${r['ben'] + r['expenses'] / 2:,.2f}")
         if r["expenses"]:
             lines.append(f"  Expenses (Ben card): ${r['expenses']:,.2f}  -> Jesse pays Ben half: ${r['expenses'] / 2:,.2f}")
         lines.append(f"  Ben receives:        ${r['ben'] + r['expenses']:,.2f}")
         lines.append(f"  Jesse receives:      ${r['jesse']:,.2f}")
-        lines.append(f"  Withdraw total:    ${r['expected_withdrawal']:,.2f}")
+        lines.append(f"  Withdraw total:      ${r['expected_withdrawal']:,.2f}")
         lines.append("")
     if len(rows) > 1:
-        lines.append(f"ALL ACCOUNTS — Ben ${(rows['ben'] + rows['expenses']).sum():,.2f} · Jesse ${rows['jesse'].sum():,.2f} · Seed ${rows['seed'].sum():,.2f} · Withdraw ${rows['expected_withdrawal'].sum():,.2f}")
+        lines.append(f"ALL ACCOUNTS - Ben ${(rows['ben'] + rows['expenses']).sum():,.2f} / Jesse ${rows['jesse'].sum():,.2f} / Seed ${rows['seed'].sum():,.2f} / Withdraw ${rows['expected_withdrawal'].sum():,.2f}")
     return "\n".join(lines)
 
 
@@ -340,7 +404,7 @@ with st.sidebar:
                 unsafe_allow_html=True)
     sync_times = [pd.to_datetime(r["time"]) for r in latest.values()]
     last_sync_ts = max(sync_times) if sync_times else None
-    last_sync = last_sync_ts.tz_convert("America/New_York").strftime("%b %d, %I:%M %p") if last_sync_ts is not None else "—"
+    last_sync = last_sync_ts.tz_convert(DAY_TZ).strftime("%b %d, %I:%M %p") if last_sync_ts is not None else "—"
     st.markdown(f"<div class='kw-label' style='margin-top:14px'>Last sync</div><div style='font-size:13px;color:{TEXT}'>{last_sync} ET</div>",
                 unsafe_allow_html=True)
     st.markdown(f"<div class='kw-label' style='margin-top:14px'>Weekly expenses</div><div style='font-size:13px;color:{TEXT}'>${WEEKLY_RECURRING:,.2f} recurring</div>",
@@ -360,34 +424,72 @@ with st.sidebar:
         time.sleep(1.0)
         st.rerun()
 
-# ---------------------------------------------------------------- stale-data banner
-if last_sync_ts is not None:
-    age = (now_utc - last_sync_ts).total_seconds() / 60
-    if age > STALE_MINUTES:
-        st.markdown(f"<div class='kw-alert'>⚠ Data is {age:.0f} minutes old. The VPS collector hasn't synced since {last_sync} ET — check that MT5 is logged in and the scheduled task is running.</div>",
-                    unsafe_allow_html=True)
+# ---------------------------------------------------------------- masthead
+age_min = (now_utc - last_sync_ts).total_seconds() / 60 if last_sync_ts is not None else 9999
+fresh = age_min <= STALE_MINUTES
+h = now_et.hour + now_et.minute / 60
+wd = now_et.weekday()
+fx_open = not (wd == 5 or (wd == 6 and h < 17) or (wd == 4 and h >= 17))
+tokyo = fx_open and (h >= 19 or h < 4)
+london = fx_open and (3 <= h < 11.5)
+ny = fx_open and (8 <= h < 17)
+payout_dt = pd.Timestamp(this_week + timedelta(days=4), tz=DAY_TZ) + pd.Timedelta(hours=17)
+if now_et > payout_dt:
+    payout_dt += pd.Timedelta(days=7)
+secs = (payout_dt - now_et).total_seconds()
+countdown = f"{int(secs // 86400)}d {int(secs % 86400 // 3600):02d}h"
 
-# ---------------------------------------------------------------- header: this week, all accounts
-st.markdown(f"<div class='kw-head'><span class='kw-title'>Kona Wolf Trading</span></div>"
-            f"<div class='kw-sub'>Week of {this_week:%b %d} · {len(logins)} account{'s' if len(logins) != 1 else ''} · payout Friday {this_week + timedelta(days=4):%b %d}</div>",
-            unsafe_allow_html=True)
 
+def sess(name, on):
+    return f"<span class='{'on' if on else ''}'><b>{name}</b> {'●' if on else '○'}</span>"
+
+
+st.markdown(f"""
+<div class='kw-mast'>
+  <div class='kw-brand'>
+    <div class='kw-mono'>KW</div>
+    <div class='kw-word'><div class='a'>KONA WOLF</div><div class='b'>TRADING</div></div>
+  </div>
+  <div class='kw-strip'>
+    <div class='kw-sess'>{sess('TOKYO', tokyo)}{sess('LONDON', london)}{sess('NEW YORK', ny)}</div>
+    <div class='kw-live'><div class='kw-dot {'bad' if not fresh else ''}'></div>{'LIVE' if fresh else 'STALE'} · synced {int(age_min)}m ago</div>
+    <div class='kw-count'>Payout in <b>{countdown}</b></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+if not fresh:
+    st.markdown(f"<div class='kw-alert'>⚠ Data is {age_min:.0f} minutes old. The VPS collector hasn't synced since {last_sync} ET — check that MT5 is logged in and the scheduled task is running.</div>",
+                unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- header cards: this week
 g = cur["gross"].sum() if not cur.empty else 0
 e = cur["expenses"].sum() if not cur.empty else 0
 sd = cur["seed"].sum() if not cur.empty else 0
 b = cur["ben"].sum() if not cur.empty else 0
 j = cur["jesse"].sum() if not cur.empty else 0
 half = e / 2
-share = b + half          # each partner's 50% of profit after seed, before expenses
-cards([("Gross this week", money(g), sgn(g)), ("Seed → Donna", money(sd), ""),
-       ("Expenses on Ben's card", money(e), ""), ("Jesse → Ben for half", money(half), "")])
-cards([("Ben · profit split", money(share), sgn(share)), ("Ben receives", money(b + e), sgn(b + e)),
-       ("Jesse · profit split", money(share), sgn(share)), ("Jesse receives", money(j), sgn(j))])
+share = b + half
+
+wk_days = daily_all[daily_all.index >= this_week]
+bal_hist = deals[deals["type"].isin([0, 1, 2])].groupby("date")["net"].sum().cumsum().tail(30)
+week_spark = spark(wk_days.cumsum(), GREEN if g >= 0 else RED)
+bal_spark = spark(bal_hist, BLUE)
+
+st.markdown(f"<div class='kw-note' style='margin-bottom:10px'>Week of {this_week:%B %d} · {len(logins)} account{'s' if len(logins) != 1 else ''} · payout Friday {this_week + timedelta(days=4):%B %d}</div>", unsafe_allow_html=True)
+cards([("Gross this week", money(g), sgn(g), week_spark),
+       ("Seed → Donna", money(sd), ""),
+       ("Expenses on Ben's card", money(e), ""),
+       ("Jesse → Ben for half", money(half), "")])
+cards([("Ben · profit split", money(share), sgn(share)),
+       ("Ben receives", money(b + e), sgn(b + e)),
+       ("Jesse · profit split", money(share), sgn(share)),
+       ("Jesse receives", money(j), sgn(j))])
 st.markdown(f"<div class='kw-note'>Profit splits 50/50 at {money(share)} each. Expenses of {money(e)} were paid on Ben's card, so Jesse's half ({money(half)}) "
             f"moves from Jesse's share to Ben. Ben receives {money(share)} + {money(half)} = {money(b + e)}. Jesse receives {money(share)} − {money(half)} = {money(j)}.</div>",
             unsafe_allow_html=True)
 
-# ---------------------------------------------------------------- running totals
+# ---------------------------------------------------------------- totals
 prior_ben = sum(cfg[l]["prior_ben"] for l in logins)
 prior_jesse = sum(cfg[l]["prior_jesse"] for l in logins)
 prior_seed = sum(cfg[l]["prior_seed"] for l in logins)
@@ -395,16 +497,16 @@ if not tracked.empty or prior_ben or prior_jesse or prior_seed:
     section("Totals to date")
     tb = (tracked["ben"] + tracked["expenses"]).sum() if not tracked.empty else 0
     tj = tracked["jesse"].sum() if not tracked.empty else 0
-    ts = tracked["seed"].sum() if not tracked.empty else 0
+    ts_ = tracked["seed"].sum() if not tracked.empty else 0
     te = tracked["expenses"].sum() if not tracked.empty else 0
     tg = tracked["gross"].sum() if not tracked.empty else 0
     cards([("Ben · all time", money(prior_ben + tb), "pos"),
            ("Jesse · all time", money(prior_jesse + tj), "pos"),
-           ("Donna · seed repaid", money(prior_seed + ts), ""),
+           ("Donna · seed repaid", money(prior_seed + ts_), ""),
            ("Expenses on Ben's card · since ledger", money(te), "")])
     cards([("Ben · since ledger", money(tb), "pos"),
            ("Jesse · since ledger", money(tj), "pos"),
-           ("Donna · since ledger", money(ts), ""),
+           ("Donna · since ledger", money(ts_), ""),
            ("Gross · since ledger", money(tg), sgn(tg))])
     st.markdown(f"<div class='kw-note'>All-time figures include payouts made before the ledger started (Ben {money(prior_ben)}, Jesse {money(prior_jesse)}, Donna {money(prior_seed)}).</div>",
                 unsafe_allow_html=True)
@@ -449,6 +551,49 @@ for l in logins:
     st.markdown(f"<div class='kw-acct'><span class='name'>{c_['nickname']}</span><span class='tag'>#{l} · {tag}</span>"
                 f"<div class='row'>{html}</div>{bar}</div>", unsafe_allow_html=True)
 
+# ---------------------------------------------------------------- performance: equity + drawdown, monthly grid
+section("Performance")
+cum = daily_all.cumsum()
+peak = cum.cummax()
+fig = go.Figure()
+fig.add_scatter(x=list(peak.index), y=list(peak.values), mode="lines",
+                line=dict(color="rgba(212,168,67,0.45)", width=1, dash="dot"), name="High-water mark",
+                hovertemplate="HWM %{y:,.0f}<extra></extra>")
+fig.add_scatter(x=list(cum.index), y=list(cum.values), mode="lines",
+                line=dict(color=BLUE, width=2), fill="tonexty", fillcolor="rgba(229,72,77,0.12)", name="Cumulative P&L",
+                hovertemplate="%{x|%b %d}<br>%{y:,.0f}<extra></extra>")
+fig.add_annotation(x=peak.index[-1], y=peak.iloc[-1], text=f"HWM {peak.iloc[-1]:,.0f}",
+                   showarrow=False, yshift=12, font=dict(size=11, color=ACCENT))
+st.plotly_chart(chart_layout(fig, 360), use_container_width=True, config={"displayModeBar": False})
+st.markdown("<div class='kw-note'>Blue line is cumulative realised P&L across all accounts; the shaded band is drawdown from the high-water mark.</div>", unsafe_allow_html=True)
+
+# monthly returns grid
+mret = trades.copy()
+mret["y"] = mret["time"].dt.year
+mret["m"] = mret["time"].dt.month
+grid = mret.groupby(["y", "m"])["net"].sum().unstack(fill_value=float("nan"))
+rows_html = ""
+for y in sorted(grid.index):
+    cells = ""
+    ytd = 0.0
+    for m in range(1, 13):
+        v = grid.loc[y].get(m)
+        if v is None or v != v:
+            cells += "<td style='color:#3A465C'>—</td>"
+        else:
+            pct = v / BASE_TOTAL * 100
+            ytd += pct
+            a = min(abs(pct) / 8, 1) * 0.5
+            bg = f"rgba(47,191,113,{a:.2f})" if pct >= 0 else f"rgba(229,72,77,{a:.2f})"
+            fg = GREEN if pct >= 0 else RED
+            cells += f"<td style='background:{bg};color:{fg}'>{pct:+.1f}%</td>"
+    fg = GREEN if ytd >= 0 else RED
+    rows_html += f"<tr><td>{y}</td>{cells}<td class='ytd' style='color:{fg}'>{ytd:+.1f}%</td></tr>"
+mons = "".join(f"<th>{m}</th>" for m in ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
+st.markdown(f"<div class='kw-mret'><table><thead><tr><th>Year</th>{mons}<th>YTD</th></tr></thead><tbody>{rows_html}</tbody></table></div>",
+            unsafe_allow_html=True)
+st.markdown(f"<div class='kw-note'>Monthly return on trading capital (${BASE_TOTAL:,.0f} base).</div>", unsafe_allow_html=True)
+
 # ---------------------------------------------------------------- friday summary
 section("Friday summary")
 week_opts = sorted(tracked["week"].unique(), reverse=True) if not tracked.empty else [this_week]
@@ -457,7 +602,7 @@ st.code(summary_text(wsel), language=None)
 st.markdown("<div class='kw-note'>Tap the copy icon in the top-right of the box, then paste into a text to Ben or Donna.</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- weekly payouts chart
-section("Weekly payouts (all accounts)")
+section("Weekly payouts")
 if not tracked.empty:
     wk_sum = tracked.groupby("week")[["jesse", "ben", "seed", "expenses"]].sum().sort_index().tail(16)
     x = [f"{w:%b %d}" for w in wk_sum.index]
@@ -591,7 +736,7 @@ daily = tsel.groupby("date")["net"].sum()
 year, month = months[st.session_state.cal_idx]
 month_daily = daily[[d.year == year and d.month == month for d in daily.index]]
 m_total = month_daily.sum()
-base_for_pct = sum(cfg[l]["base"] for l in logins) if sel_login is None else cfg[sel_login]["base"]
+base_for_pct = BASE_TOTAL if sel_login is None else cfg[sel_login]["base"]
 col = GREEN if m_total >= 0 else RED
 st.markdown(f"<div class='kw-monthline'><span style='color:{TEXT};font-size:17px'>{calendar.month_name[month]} {year}</span>"
             f"&nbsp;&nbsp;<span style='color:{col}'>{m_total:+,.2f}</span>"
@@ -611,15 +756,18 @@ for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
                       f"<div class='p'>{val / base_for_pct * 100:+.2f}%</div></div>")
 st.markdown(f"<div class='kw-cal'>{tiles}</div>", unsafe_allow_html=True)
 
-# ---------------------------------------------------------------- risk stats
-section(f"Risk · {sel}")
+# ---------------------------------------------------------------- risk & edge
+section(f"Risk & edge · {sel}")
 wins = tsel[tsel["net"] > 0]
 losses = tsel[tsel["net"] < 0]
 n = len(tsel)
 aw = wins["net"].mean() if len(wins) else 0
 al = losses["net"].mean() if len(losses) else 0
 pf = wins["net"].sum() / abs(losses["net"].sum()) if len(losses) and losses["net"].sum() != 0 else 0
+expectancy = tsel["net"].mean() if n else 0
 weekly_sel = tsel.groupby("week")["net"].sum()
+wret = weekly_sel / base_for_pct
+sharpe = (wret.mean() / wret.std() * math.sqrt(52)) if len(wret) > 2 and wret.std() > 0 else 0
 dd = 0.0
 for wk, grp in tsel.sort_values("time").groupby("week"):
     dd = min(dd, grp["net"].cumsum().min())
@@ -629,10 +777,26 @@ for v in daily.sort_index(ascending=False):
         streak += 1
     else:
         break
-cards([("Win rate", f"{len(wins) / n * 100 if n else 0:.0f}%", ""), ("Profit factor", f"{pf:.2f}", ""),
-       ("Avg win / loss", f"{aw:,.0f} / {al:,.0f}", "small"), ("Trades", f"{n:,}", "")])
-cards([("Worst day", money(daily.min() if len(daily) else 0), "neg"), ("Worst week", money(weekly_sel.min() if len(weekly_sel) else 0), "neg"),
-       ("Deepest dip below base", money(dd), "neg" if dd < 0 else ""), ("Losing days in a row", f"{streak}", "neg" if streak else "")])
+best_streak = cur_streak = 0
+for v in daily.sort_index():
+    cur_streak = cur_streak + 1 if v > 0 else 0
+    best_streak = max(best_streak, cur_streak)
+cum_sel = daily.cumsum()
+peak_sel = cum_sel.cummax()
+under = cum_sel - peak_sel
+max_dd_curve = under.min() if len(under) else 0
+cards([("Win rate", f"{len(wins) / n * 100 if n else 0:.0f}%", ""),
+       ("Profit factor", f"{pf:.2f}", ""),
+       ("Expectancy / trade", f"{expectancy:+,.2f}", sgn(expectancy)),
+       ("Sharpe (weekly, ann.)", f"{sharpe:.2f}", "")])
+cards([("Avg win / loss", f"{aw:,.0f} / {al:,.0f}", "small"),
+       ("Best green streak", f"{best_streak} days", "pos"),
+       ("Max drawdown (curve)", money(max_dd_curve), "neg" if max_dd_curve < 0 else ""),
+       ("Losing days in a row", f"{streak}", "neg" if streak else "")])
+cards([("Worst day", money(daily.min() if len(daily) else 0), "neg"),
+       ("Worst week", money(weekly_sel.min() if len(weekly_sel) else 0), "neg"),
+       ("Deepest dip below base", money(dd), "neg" if dd < 0 else ""),
+       ("Trades", f"{n:,}", "")])
 
 # ---------------------------------------------------------------- trades
 section(f"Trades · {sel}")
@@ -653,3 +817,7 @@ with tab_closed:
     show["time"] = show["time"].dt.strftime("%Y-%m-%d %H:%M")
     st.dataframe(show[["account", "ticket", "time", "symbol", "volume", "price", "commission", "swap", "profit", "net"]].head(500),
                  use_container_width=True, hide_index=True)
+
+st.markdown(f"<div style='border-top:1px solid {LINE};margin-top:36px;padding-top:14px;color:{MUTED};font-size:11px;letter-spacing:0.08em'>"
+            f"KONA WOLF TRADING · internal use only · data via MT5 #{', #'.join(str(l) for l in logins)} · synced {last_sync} ET</div>",
+            unsafe_allow_html=True)
