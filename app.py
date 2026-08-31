@@ -92,12 +92,13 @@ def remember(session):
 
 if "session" not in st.session_state:
     all_cookies = cookies.get_all(key="kw_all")
-    if all_cookies is None and not st.session_state.get("cookie_checked"):
-        # cookie component hasn't reported back yet - show a holding screen, not the login form
-        st.session_state.cookie_checked = True
-        st.markdown("<div style='text-align:center;margin-top:35vh;color:#8A94A8;font-size:14px'>Signing in…</div>",
-                    unsafe_allow_html=True)
-        st.stop()
+    if all_cookies is None:
+        # cookie reader hasn't reported back yet - hold here (max 3s) instead of flashing the login form
+        started = st.session_state.setdefault("cookie_wait_start", time.time())
+        if time.time() - started < 3:
+            st.markdown("<div style='text-align:center;margin-top:35vh;color:#8A94A8;font-size:14px'>Signing in…</div>",
+                        unsafe_allow_html=True)
+            st.stop()
     saved = (all_cookies or {}).get(COOKIE)
     if saved:
         try:
