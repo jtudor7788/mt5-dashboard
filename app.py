@@ -195,7 +195,7 @@ def compute_payouts(login):
     out = []
     for wk, gross in weekly.items():
         fri = wk + timedelta(days=4)
-        w = withdrawals[(withdrawals["login"] == login) & (withdrawals["date"] >= fri) & (withdrawals["date"] < fri + timedelta(days=8))]
+        w = withdrawals[(withdrawals["login"] == login) & (withdrawals["date"] >= fri) & (withdrawals["date"] < fri + timedelta(days=7))]
         withdrawn = -w["net"].sum()
         tracked = wk >= c["started_on"]
         key = (wk, login)
@@ -224,7 +224,7 @@ def compute_payouts(login):
                 ben = jesse = rest / 2
             if wk == this_week:
                 status = "in progress"
-            elif withdrawn == 0 and today < fri + timedelta(days=8):
+            elif withdrawn == 0 and today < fri + timedelta(days=7):
                 status = "pending"
             elif abs(withdrawn - (ben + jesse + exp + seed_pay)) > MATCH_TOLERANCE:
                 status = "⚠ mismatch"
@@ -232,7 +232,7 @@ def compute_payouts(login):
                 status = "✓ matched"
         if status == "paid":
             expected = ben + jesse + exp + seed_pay
-            if withdrawn == 0 and today < fri + timedelta(days=8):
+            if withdrawn == 0 and today < fri + timedelta(days=7):
                 status = "paid · pending"
             elif abs(withdrawn - expected) > MATCH_TOLERANCE:
                 status = "paid · ⚠ mismatch"
@@ -443,7 +443,7 @@ if not allp.empty:
         "split_each": "Profit split each", "jesse_to_ben": "Jesse → Ben", "ben_total": "Ben receives", "jesse": "Jesse receives",
         "expected_withdrawal": "Should withdraw", "withdrawn": "Withdrawn (MT5)"})
     st.dataframe(show, use_container_width=True, hide_index=True,
-                 column_config={k: st.column_config.NumberColumn(format="$%.2f") for k in show.columns if k not in ("Week", "Account", "Status")})
+                 column_config={k: st.column_config.NumberColumn(format="dollar") for k in show.columns if k not in ("Week", "Account", "Status")})
 
     with st.expander("Mark a week as paid / undo"):
         st.markdown("<div class='kw-note'>Marking a week paid freezes its split so later changes to expenses or seed settings don't rewrite history. "
@@ -525,7 +525,7 @@ if not expenses.empty:
     ex = expenses.copy()
     ex["recurring"] = ex["recurring"].fillna("one-off")
     st.dataframe(ex[["spent_on", "description", "amount", "recurring"]].rename(columns={"spent_on": "Date", "description": "Item", "amount": "Amount", "recurring": "Repeats"}),
-                 use_container_width=True, hide_index=True, column_config={"Amount": st.column_config.NumberColumn(format="$%.2f")})
+                 use_container_width=True, hide_index=True, column_config={"Amount": st.column_config.NumberColumn(format="dollar")})
 
 # ---------------------------------------------------------------- calendar
 section("Calendar")
