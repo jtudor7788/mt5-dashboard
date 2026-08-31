@@ -131,6 +131,8 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
 </style>
 """, unsafe_allow_html=True)
 
+LOGO_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/logo.png"
+
 sb = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 
 # ---------------------------------------------------------------- login (with remember-me cookie)
@@ -164,9 +166,8 @@ if "session" not in st.session_state:
 if "session" not in st.session_state:
     _, mid, _ = st.columns([1, 1.2, 1])
     with mid:
-        st.markdown("<div class='kw-brand' style='margin-bottom:6px'><div class='kw-mono'>KW</div>"
-                    "<div class='kw-word'><div class='a'>KONA WOLF</div><div class='b'>TRADING</div></div></div>"
-                    "<div class='kw-note'>Sign in to view the accounts</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:center;margin-bottom:10px'><img src='{LOGO_URL}' style='width:190px;max-width:70%'></div>"
+                    "<div class='kw-note' style='text-align:center'>Sign in to view the accounts</div>", unsafe_allow_html=True)
         email = st.text_input("Email")
         pw = st.text_input("Password", type="password")
         if st.button("Sign in", use_container_width=True):
@@ -453,7 +454,7 @@ def sess(name, on):
 st.markdown(f"""
 <div class='kw-mast'>
   <div class='kw-brand'>
-    <div class='kw-mono'>KW</div>
+    <img src='{LOGO_URL}' style='height:62px'>
     <div class='kw-word'><div class='a'>KONA WOLF</div><div class='b'>TRADING</div></div>
   </div>
   <div class='kw-strip'>
