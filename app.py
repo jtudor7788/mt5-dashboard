@@ -78,6 +78,13 @@ header [data-testid="stExpandSidebarButton"],
 .kw-value.small {{ font-size:17px; }}
 .kw-value.pos {{ color:{GREEN}; }}  .kw-value.neg {{ color:{RED}; }}
 .kw-spark {{ margin-top:8px; height:26px; }}
+.kw-sub {{ color:{MUTED}; font-size:10.5px; letter-spacing:0.06em; margin-top:5px; white-space:nowrap;
+           overflow:hidden; text-overflow:ellipsis; }}
+
+/* month stat row */
+.kw-stats {{ display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:12px; margin:4px 0 14px; }}
+.kw-stat {{ display:flex; align-items:center; justify-content:space-between; gap:10px; }}
+.kw-stat > div {{ min-width:0; }}
 
 /* account panels */
 .kw-acct {{ background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent 30%), {CARD};
@@ -100,19 +107,57 @@ header [data-testid="stExpandSidebarButton"],
 .kw-mret tr:last-child td {{ border-bottom:none; }}
 .kw-mret td.ytd {{ font-weight:600; border-left:1px solid {LINE}; }}
 
-/* calendar */
+/* calendar shell */
+.kw-calwrap {{ display:grid; grid-template-columns:1fr 252px; gap:12px; align-items:start; }}
+.kw-calmain {{ background:{CARD}; border:1px solid {LINE}; border-radius:12px; padding:14px; animation:kwfade .5s ease; }}
+.kw-calhead {{ display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px; margin-bottom:11px; }}
+.kw-calhead .t {{ font-size:16px; color:{TEXT}; font-weight:600; }}
+.kw-calhead .m {{ font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; }}
+.kw-calhead .s {{ font-size:11px; color:{MUTED}; letter-spacing:0.06em; }}
+
 .kw-cal {{ display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:7px; }}
 .kw-dow {{ text-align:center; color:{MUTED}; font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; padding-bottom:5px; }}
-.kw-day {{ border-radius:9px; padding:8px 4px; min-height:80px; text-align:center; font-family:'IBM Plex Mono', monospace;
+.kw-day {{ border-radius:9px; padding:8px 9px; min-height:84px; text-align:left; font-family:'IBM Plex Mono', monospace;
            border:1px solid {LINE}; min-width:0; }}
+.kw-day .top {{ display:flex; justify-content:space-between; align-items:baseline; gap:4px; }}
 .kw-day .n {{ font-size:11px; color:{MUTED}; }}
-.kw-day .v {{ font-size:14px; font-weight:600; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-.kw-day .p {{ font-size:10.5px; opacity:0.8; white-space:nowrap; }}
+.kw-day .pct {{ font-size:9.5px; color:{MUTED}; opacity:0.85; }}
+.kw-day .v {{ font-size:14px; font-weight:600; margin-top:9px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.kw-day .p {{ font-size:10px; color:{MUTED}; margin-top:3px; white-space:nowrap; }}
 .kw-day.pos {{ background:#12352A; border-color:#1F5A45; color:{GREEN}; }}
 .kw-day.neg {{ background:#3A1B1F; border-color:#6A2A2A; color:{RED}; }}
-.kw-day.flat {{ background:{CARD}; color:{TEXT}; }}
+.kw-day.flat {{ background:{CARD2}; color:{TEXT}; }}
 .kw-day.empty {{ background:transparent; border-color:transparent; }}
-.kw-monthline {{ font-family:'IBM Plex Mono', monospace; font-size:15px; margin:6px 0 10px; }}
+.kw-day.today {{ box-shadow:0 0 0 1px {ACCENT} inset; }}
+
+/* weeks rail */
+.kw-weeks {{ background:{CARD}; border:1px solid {LINE}; border-radius:12px; padding:0 0 4px; animation:kwfade .5s ease; }}
+.kw-whead {{ display:flex; justify-content:space-between; align-items:center; padding:12px 14px; border-bottom:1px solid {LINE};
+             font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; color:{MUTED}; }}
+.kw-whead .tot {{ font-family:'IBM Plex Mono',monospace; letter-spacing:0; text-transform:none; font-size:12.5px; font-weight:600; }}
+.kw-wrow {{ display:grid; grid-template-columns:1fr 58px auto; gap:8px; align-items:center; padding:9px 14px;
+            border-bottom:1px solid rgba(30,42,64,0.5); }}
+.kw-wrow:last-child {{ border-bottom:none; }}
+.kw-wrow .wl {{ font-size:12px; color:{TEXT}; }}
+.kw-wrow .ws {{ font-size:10px; color:{MUTED}; margin-top:2px; }}
+.kw-wrow .wv {{ font-family:'IBM Plex Mono',monospace; font-size:12.5px; font-weight:600; color:{MUTED}; white-space:nowrap; }}
+.kw-wrow .wv.pos {{ color:{GREEN}; }} .kw-wrow .wv.neg {{ color:{RED}; }}
+.kw-wrow .kw-spark {{ margin-top:0; height:20px; }}
+
+/* year strip */
+.kw-year {{ margin-top:12px; background:{CARD}; border:1px solid {LINE}; border-radius:12px; padding:12px 14px 14px; animation:kwfade .5s ease; }}
+.kw-year .h {{ display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px; margin-bottom:10px; }}
+.kw-ygrid {{ display:grid; grid-template-columns:repeat(12, minmax(0,1fr)); gap:6px; }}
+.kw-ycell {{ border:1px solid {LINE}; border-radius:8px; padding:8px 5px; text-align:center; text-decoration:none;
+             display:block; min-width:0; background:{CARD2}; }}
+.kw-ycell .mm {{ font-size:9.5px; color:{MUTED}; letter-spacing:0.08em; text-transform:uppercase; }}
+.kw-ycell .vv {{ font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; margin-top:4px; color:{TEXT};
+                 white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.kw-ycell .nn {{ font-size:9px; color:{MUTED}; margin-top:2px; white-space:nowrap; }}
+.kw-ycell.pos {{ background:#12352A; border-color:#1F5A45; }} .kw-ycell.pos .vv {{ color:{GREEN}; }}
+.kw-ycell.neg {{ background:#3A1B1F; border-color:#6A2A2A; }} .kw-ycell.neg .vv {{ color:{RED}; }}
+.kw-ycell.on {{ box-shadow:0 0 0 1px {ACCENT} inset; }}
+
 div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}; }}
 .kw-refresh {{ position:fixed; bottom:18px; left:14px; z-index:998; width:46px; height:46px; border-radius:50%;
   background:{CARD}; border:1px solid {LINE}; color:{ACCENT}; display:flex; align-items:center; justify-content:center;
@@ -122,16 +167,21 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
 @media (max-width: 700px) {{
   .block-container {{ padding-left:0.8rem; padding-right:0.8rem; padding-top:0.9rem; }}
   .kw-grid {{ grid-template-columns:repeat(2, minmax(0,1fr)); gap:9px; }}
+  .kw-stats {{ grid-template-columns:repeat(2, minmax(0,1fr)); gap:9px; }}
   .kw-card {{ padding:11px 13px 9px; }}
   .kw-value {{ font-size:18px; }}  .kw-value.small {{ font-size:14px; }}
   .kw-acct .row {{ grid-template-columns:repeat(2, minmax(0,1fr)); }}
   .kw-acct .v {{ font-size:15px; }}
+  .kw-calwrap {{ grid-template-columns:1fr; }}
+  .kw-calmain {{ padding:8px; }}
   .kw-cal {{ gap:3px; }}
-  .kw-day {{ min-height:58px; padding:5px 2px; border-radius:6px; }}
+  .kw-day {{ min-height:60px; padding:5px 4px; border-radius:6px; }}
   .kw-day .n {{ font-size:9.5px; }}
-  .kw-day .v {{ font-size:10.5px; margin-top:3px; }}
+  .kw-day .pct {{ display:none; }}
+  .kw-day .v {{ font-size:10.5px; margin-top:4px; }}
   .kw-day .p {{ display:none; }}
   .kw-dow {{ font-size:9px; }}
+  .kw-ygrid {{ grid-template-columns:repeat(4, minmax(0,1fr)); }}
   .kw-sess {{ display:none; }}
   .kw-logo {{ height:42px; width:auto; }}
   div[data-testid="stHorizontalBlock"] {{ flex-wrap:nowrap !important; gap:6px !important; }}
@@ -399,6 +449,18 @@ def spark(values, color=BLUE, w=120, h=24):
     return (f"<div class='kw-spark'><svg width='100%' height='{h}' viewBox='0 0 {w} {h}' preserveAspectRatio='none'>"
             f"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'/>"
             f"</svg></div>")
+
+
+def donut(pct, size=54, stroke=6):
+    """Ring gauge for the win-rate card."""
+    r = (size - stroke) / 2
+    circ = 2 * math.pi * r
+    on = circ * max(min(pct, 100.0), 0.0) / 100
+    col = GREEN if pct >= 50 else RED
+    return (f"<svg width='{size}' height='{size}' viewBox='0 0 {size} {size}' style='transform:rotate(-90deg);flex:none'>"
+            f"<circle cx='{size / 2}' cy='{size / 2}' r='{r:.1f}' fill='none' stroke='{LINE}' stroke-width='{stroke}'/>"
+            f"<circle cx='{size / 2}' cy='{size / 2}' r='{r:.1f}' fill='none' stroke='{col}' stroke-width='{stroke}' "
+            f"stroke-linecap='round' stroke-dasharray='{on:.2f} {circ - on:.2f}'/></svg>")
 
 
 def cards(items):
@@ -792,10 +854,24 @@ names = ["All accounts"] + [cfg[l]["nickname"] for l in logins]
 months = sorted({(d.year, d.month) for d in trades["date"]})
 if "cal_idx" not in st.session_state:
     st.session_state.cal_idx = len(months) - 1
-r1 = st.columns([1, 1])
+
+# a tap on the year strip arrives as ?cal=YYYY-MM; apply it once, then let the
+# buttons and the month picker take over again
+qm = st.query_params.get("cal")
+if qm and st.session_state.get("cal_qp") != qm:
+    st.session_state.cal_qp = qm
+    try:
+        key = (int(qm[:4]), int(qm[5:7]))
+        if key in months:
+            st.session_state.cal_idx = months.index(key)
+    except Exception:
+        pass
+
+r1 = st.columns([1.2, 1.2, 1])
 sel = r1[0].selectbox("Account", names, label_visibility="collapsed")
 pick = r1[1].selectbox("Month", months, index=st.session_state.cal_idx, label_visibility="collapsed",
                        format_func=lambda x: f"{calendar.month_name[x[1]]} {x[0]}")
+pl_mode = r1[2].radio("P&L basis", ["Net", "Gross"], horizontal=True, label_visibility="collapsed")
 if months.index(pick) != st.session_state.cal_idx:
     st.session_state.cal_idx = months.index(pick)
     st.rerun()
@@ -808,46 +884,138 @@ if r2[1].button("Next ▶", use_container_width=True, disabled=st.session_state.
     st.rerun()
 
 sel_login = None if sel == "All accounts" else logins[names.index(sel) - 1]
-tsel = trades if sel_login is None else trades[trades["login"] == sel_login]
-daily = tsel.groupby("date")["net"].sum()
+tsel = (trades if sel_login is None else trades[trades["login"] == sel_login]).copy()
+# Net = profit + commission + swap (what actually hit the account).
+# Gross = raw trade profit before costs. Everything from here down follows this switch.
+tsel["pl"] = tsel["net"] if pl_mode == "Net" else tsel["profit"].fillna(0)
+basis = pl_mode.lower()
+
 year, month = months[st.session_state.cal_idx]
-month_daily = daily[[d.year == year and d.month == month for d in daily.index]]
-m_total = month_daily.sum()
 base_for_pct = BASE_TOTAL if sel_login is None else cfg[sel_login]["base"]
-col = GREEN if m_total >= 0 else RED
-st.markdown(f"<div class='kw-monthline'><span style='color:{TEXT};font-size:17px'>{calendar.month_name[month]} {year}</span>"
-            f"&nbsp;&nbsp;<span style='color:{col}'>{m_total:+,.2f}</span>"
-            f"&nbsp;<span style='color:{col};opacity:0.7'>({m_total / base_for_pct * 100:+.2f}%)</span></div>", unsafe_allow_html=True)
+last_dom = calendar.monthrange(year, month)[1]
+mon_abbr = calendar.month_abbr[month]
+
+daily = tsel.groupby("date")["pl"].sum()
+in_month = tsel[[d.year == year and d.month == month for d in tsel["date"]]]
+month_daily = in_month.groupby("date")["pl"].sum()
+month_count = in_month.groupby("date").size()
+m_total = month_daily.sum()
+wins_m = int((in_month["pl"] > 0).sum())
+loss_m = int((in_month["pl"] < 0).sum())
+wr = wins_m / (wins_m + loss_m) * 100 if (wins_m + loss_m) else 0.0
+green_days = int((month_daily > 0).sum())
+red_days = int((month_daily < 0).sum())
+m_col = GREEN if m_total >= 0 else RED
+
+# --- stat row
+stat_html = (
+    f"<div class='kw-card'><div class='kw-label'>{pl_mode} P&amp;L · month</div>"
+    f"<div class='kw-value {sgn(m_total)}'>{m_total:+,.2f}</div>"
+    f"<div class='kw-sub'>{m_total / base_for_pct * 100:+.2f}% on capital</div>"
+    f"{spark(month_daily.cumsum(), m_col)}</div>"
+
+    f"<div class='kw-card kw-stat'><div><div class='kw-label'>Win rate</div>"
+    f"<div class='kw-value'>{wr:.1f}%</div><div class='kw-sub'>{wins_m}W · {loss_m}L</div></div>{donut(wr)}</div>"
+
+    f"<div class='kw-card'><div class='kw-label'>Trades</div><div class='kw-value'>{len(in_month)}</div>"
+    f"<div class='kw-sub'>closed in {mon_abbr}</div></div>"
+
+    f"<div class='kw-card'><div class='kw-label'>Green days</div><div class='kw-value pos'>{green_days}</div>"
+    f"<div class='kw-sub'>closed positive</div></div>"
+
+    f"<div class='kw-card'><div class='kw-label'>Red days</div><div class='kw-value neg'>{red_days}</div>"
+    f"<div class='kw-sub'>closed negative</div></div>")
+st.markdown(f"<div class='kw-stats'>{stat_html}</div>", unsafe_allow_html=True)
+
+# --- month grid + weeks rail (Sunday-first rows; each row is exactly one payout week)
+cal_weeks = calendar.Calendar(firstweekday=6).monthdayscalendar(year, month)
+best_day = month_daily.idxmax() if len(month_daily) and month_daily.max() > 0 else None
 tiles = "".join(f"<div class='kw-dow'>{n}</div>" for n in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
-for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
-    for day in week:
-        if day == 0:
+weeks_html = ""
+for i, wrow in enumerate(cal_weeks, 1):
+    for dnum in wrow:
+        if dnum == 0:
             tiles += "<div class='kw-day empty'></div>"
             continue
-        val = month_daily.get(date(year, month, day))
+        dt_ = date(year, month, dnum)
+        val = month_daily.get(dt_)
+        mark = " today" if dt_ == today else ""
         if val is None:
-            tiles += f"<div class='kw-day flat'><div class='n'>{day}</div></div>"
+            tiles += f"<div class='kw-day flat{mark}'><div class='top'><span class='n'>{dnum}</span></div></div>"
         else:
             cls = "pos" if val >= 0 else "neg"
-            tiles += (f"<div class='kw-day {cls}'><div class='n'>{day}</div><div class='v'>{val:+,.0f}</div>"
-                      f"<div class='p'>{val / base_for_pct * 100:+.2f}%</div></div>")
-st.markdown(f"<div class='kw-cal'>{tiles}</div>", unsafe_allow_html=True)
+            star = " ★" if dt_ == best_day else ""
+            cnt = int(month_count.get(dt_, 0))
+            tiles += (f"<div class='kw-day {cls}{mark}'><div class='top'><span class='n'>{dnum}{star}</span>"
+                      f"<span class='pct'>{val / base_for_pct * 100:+.2f}%</span></div>"
+                      f"<div class='v'>{val:+,.0f}</div>"
+                      f"<div class='p'>{cnt} trade{'s' if cnt != 1 else ''}</div></div>")
+    have = [date(year, month, d) for d in wrow if d != 0 and date(year, month, d) in month_daily.index]
+    if have:
+        tot = float(sum(month_daily[d] for d in have))
+        sp = spark(pd.Series([month_daily[d] for d in have]).cumsum(), GREEN if tot >= 0 else RED, w=58, h=20)
+        sub = f"{len(have)} trading day{'s' if len(have) != 1 else ''}"
+        vv, vcls = f"{tot:+,.2f}", sgn(tot)
+    else:
+        sp, sub, vv, vcls = "", "no trades", "—", ""
+    weeks_html += (f"<div class='kw-wrow'><div><div class='wl'>Week {i}</div><div class='ws'>{sub}</div></div>"
+                   f"<div>{sp}</div><div class='wv {vcls}'>{vv}</div></div>")
+
+head = (f"<div class='kw-calhead'><div><span class='t'>{calendar.month_name[month]} {year}</span>"
+        f"&nbsp;&nbsp;<span class='m' style='color:{m_col}'>{m_total:+,.2f}</span></div>"
+        f"<span class='s'>{mon_abbr} 1 – {mon_abbr} {last_dom} · {basis} per day</span></div>")
+st.markdown(f"<div class='kw-calwrap'><div class='kw-calmain'>{head}<div class='kw-cal'>{tiles}</div></div>"
+            f"<div class='kw-weeks'><div class='kw-whead'><span>Weeks</span>"
+            f"<span class='tot' style='color:{m_col}'>{m_total:+,.2f}</span></div>{weeks_html}</div></div>",
+            unsafe_allow_html=True)
+
+# --- year strip
+yr = tsel[[d.year == year for d in tsel["date"]]]
+by_m = yr.groupby(yr["date"].map(lambda d: d.month))["pl"].agg(["sum", "size"]) if not yr.empty else pd.DataFrame()
+y_total = float(by_m["sum"].sum()) if not by_m.empty else 0.0
+cells = ""
+for m in range(1, 13):
+    if not by_m.empty and m in by_m.index:
+        v, n_ = float(by_m.loc[m, "sum"]), int(by_m.loc[m, "size"])
+        cls = "pos" if v >= 0 else "neg"
+        body = f"<div class='vv'>{v:+,.0f}</div><div class='nn'>{n_} trade{'s' if n_ != 1 else ''}</div>"
+    else:
+        cls = ""
+        body = "<div class='vv' style='color:#3A465C'>—</div><div class='nn'>&nbsp;</div>"
+    if m == month:
+        cls += " on"
+    inner = f"<div class='mm'>{calendar.month_abbr[m]}</div>{body}"
+    if (year, m) in months:
+        cells += f"<a class='kw-ycell {cls}' href='?cal={year}-{m:02d}' target='_self'>{inner}</a>"
+    else:
+        cells += f"<div class='kw-ycell {cls}'>{inner}</div>"
+y_col = GREEN if y_total >= 0 else RED
+y_tot_html = (f"<span style=\"font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:{y_col}\">"
+              f"{year} · {y_total:+,.2f}</span>")
+st.markdown(f"<div class='kw-year'><div class='h'><span class='kw-label' style='margin:0'>Yearly · {basis} per month · "
+            f"tap a month to open it</span>{y_tot_html}</div><div class='kw-ygrid'>{cells}</div></div>",
+            unsafe_allow_html=True)
+st.markdown(f"<div class='kw-note'>Week rows run Sunday to Saturday, which under this dashboard's week rule is exactly one payout week "
+            f"(Sunday-evening trades count toward the Monday that follows). Rows are clipped to {calendar.month_name[month]}, so they add up to the "
+            f"month total — a week straddling the month end will read lower here than in the payout ledger. "
+            f"Net includes commission and swap; Gross is raw trade profit. ★ marks the best day of the month.</div>",
+            unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- risk & edge
-section(f"Risk & edge · {sel}")
-wins = tsel[tsel["net"] > 0]
-losses = tsel[tsel["net"] < 0]
+section(f"Risk & edge · {sel} · {basis}")
+wins = tsel[tsel["pl"] > 0]
+losses = tsel[tsel["pl"] < 0]
 n = len(tsel)
-aw = wins["net"].mean() if len(wins) else 0
-al = losses["net"].mean() if len(losses) else 0
-pf = wins["net"].sum() / abs(losses["net"].sum()) if len(losses) and losses["net"].sum() != 0 else 0
-expectancy = tsel["net"].mean() if n else 0
-weekly_sel = tsel.groupby("week")["net"].sum()
+aw = wins["pl"].mean() if len(wins) else 0
+al = losses["pl"].mean() if len(losses) else 0
+pf = wins["pl"].sum() / abs(losses["pl"].sum()) if len(losses) and losses["pl"].sum() != 0 else 0
+expectancy = tsel["pl"].mean() if n else 0
+weekly_sel = tsel.groupby("week")["pl"].sum()
 wret = weekly_sel / base_for_pct
 sharpe = (wret.mean() / wret.std() * math.sqrt(52)) if len(wret) > 2 and wret.std() > 0 else 0
 dd = 0.0
 for wk, grp in tsel.sort_values("time").groupby("week"):
-    dd = min(dd, grp["net"].cumsum().min())
+    dd = min(dd, grp["pl"].cumsum().min())
 streak = 0
 for v in daily.sort_index(ascending=False):
     if v < 0:
@@ -862,7 +1030,7 @@ cum_sel = daily.cumsum()
 peak_sel = cum_sel.cummax()
 under = cum_sel - peak_sel
 max_dd_curve = under.min() if len(under) else 0
-cards([("Win rate", f"{len(wins) / n * 100 if n else 0:.0f}%", ""),
+cards([("Win rate · all time", f"{len(wins) / n * 100 if n else 0:.0f}%", ""),
        ("Profit factor", f"{pf:.2f}", ""),
        ("Expectancy / trade", f"{expectancy:+,.2f}", sgn(expectancy)),
        ("Sharpe (weekly, ann.)", f"{sharpe:.2f}", "")])
