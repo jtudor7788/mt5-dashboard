@@ -386,6 +386,11 @@ allp = pd.concat(payouts.values(), ignore_index=True) if payouts else pd.DataFra
 cur = allp[allp["week"] == this_week] if not allp.empty else pd.DataFrame()
 tracked = allp[allp["tracked"].astype(bool)] if not allp.empty else pd.DataFrame(columns=PAYOUT_COLS)
 
+st.sidebar.markdown("<div class='kw-label'>Stats from</div>", unsafe_allow_html=True)
+stats_from = st.sidebar.date_input(
+    "Stats from", value=date(2026, 6, 1), label_visibility="collapsed",
+    help="Performance, calendar and risk stats start here. Payouts and all-time totals are unaffected.")
+
 stats_trades = trades[trades["date"] >= stats_from]
 daily_all = stats_trades.groupby("date")["net"].sum().sort_index()
 
@@ -486,10 +491,6 @@ with st.sidebar:
     tcsv["time"] = tcsv["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
     st.download_button("Download trades (CSV)", tcsv.drop(columns=["date", "week"]).to_csv(index=False).encode(),
                        "trades.csv", "text/csv", use_container_width=True)
-    st.markdown(f"<div class='kw-label' style='margin-top:14px'>Stats from</div>", unsafe_allow_html=True)
-    stats_from = st.date_input("Stats from", value=date(2026, 6, 1), label_visibility="collapsed",
-                               help="Performance, calendar and risk stats start here. Payouts and all-time "
-                                    "totals are unaffected.")
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     if st.button("↻ Refresh data", use_container_width=True):
         st.cache_data.clear()
