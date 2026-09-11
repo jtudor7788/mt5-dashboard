@@ -391,7 +391,9 @@ stats_from = st.sidebar.date_input(
     "Stats from", value=date(2026, 6, 1), label_visibility="collapsed",
     help="Performance, calendar and risk stats start here. Payouts and all-time totals are unaffected.")
 
-stats_trades = trades[trades["date"] >= stats_from]
+EXCLUDED_DAYS = {date(2026, 6, 24)}   # Nurp bleed-over trades, not ours
+
+stats_trades = trades[(trades["date"] >= stats_from) & (~trades["date"].isin(EXCLUDED_DAYS))]
 daily_all = stats_trades.groupby("date")["net"].sum().sort_index()
 
 
@@ -910,6 +912,8 @@ cards([("Avg win / loss", f"{aw:,.0f} / {al:,.0f}", "small"),
        ("Best green streak", f"{best_streak} days", "pos"),
        ("Max drawdown (curve)", money(max_dd_curve), "neg" if max_dd_curve < 0 else ""),
        ("Losing days in a row", f"{streak}", "neg" if streak else "")])
+st.markdown(f"<div class='kw-note'>Excludes {', '.join(d.strftime('%b %d, %Y') for d in sorted(EXCLUDED_DAYS))} "
+            f"(carried-over trades from the previous provider).</div>", unsafe_allow_html=True)
 cards([("Worst day", money(daily.min() if len(daily) else 0), "neg"),
        ("Worst week", money(weekly_sel.min() if len(weekly_sel) else 0), "neg"),
        ("Deepest dip below base", money(dd), "neg" if dd < 0 else ""),
