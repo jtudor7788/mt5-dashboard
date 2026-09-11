@@ -435,21 +435,34 @@ def summary_text(wk):
     rows = allp[(allp["week"] == wk) & (allp["login"].isin(live))]
     lines = [f"Kona Wolf Trading - week of {wk:%b %d, %Y} (payout Fri {wk + timedelta(days=4):%b %d})", ""]
     for _, r in rows.iterrows():
+        c = cfg[r["login"]]
+        owes_seed = c["seed"] > 0 and seed_left[r["login"]] > 0
         lines.append(f"{r['account']} (#{r['login']})")
+        if c["kolby_pct"] > 0:
+            if owes_seed:
+                lines.append(f"  Split while seed owed: {c['kolby_pct'] * 100:.0f}% Kolby / 50% seed -> "
+                             f"{c['seed_holder']} / rest split Ben & Jesse")
+            else:
+                share = (1 - c["kolby_pct"]) / 2 * 100
+                lines.append(f"  Split: {c['kolby_pct'] * 100:.0f}% Kolby / {share:.0f}% Ben / {share:.0f}% Jesse")
         lines.append(f"  Gross profit:        ${r['gross']:,.2f}")
-        if r["seed"]:
-            lines.append(f"  Seed -> {cfg[r['login']]['seed_holder']}:       ${r['seed']:,.2f}")
-        lines.append(f"  Ben/Jesse split each: ${r['ben'] + r['expenses'] / 2:,.2f}")
+        if r["seed"] or owes_seed:
+            lines.append(f"  Seed -> {c['seed_holder']}:       ${r['seed']:,.2f}"
+                         f"   (still owed ${seed_left[r['login']]:,.2f})")
+        if c["kolby_pct"] > 0:
+            lines.append(f"  Kolby receives:      ${r['kolby']:,.2f}")
         if r["expenses"]:
             lines.append(f"  Expenses (Ben card): ${r['expenses']:,.2f}  -> Jesse pays Ben half: ${r['expenses'] / 2:,.2f}")
         lines.append(f"  Ben receives:        ${r['ben'] + r['expenses']:,.2f}")
         lines.append(f"  Jesse receives:      ${r['jesse']:,.2f}")
-        if r["kolby"]:
-            lines.append(f"  Kolby receives:      ${r['kolby']:,.2f}")
         lines.append(f"  Withdraw total:      ${r['expected_withdrawal']:,.2f}")
+        if r["gross"] < 0:
+            lines.append(f"  (losing week - nothing paid out, carried into next week)")
         lines.append("")
     if len(rows) > 1:
-        lines.append(f"ALL ACCOUNTS - Ben ${(rows['ben'] + rows['expenses']).sum():,.2f} / Jesse ${rows['jesse'].sum():,.2f} / Seed ${rows['seed'].sum():,.2f} / Withdraw ${rows['expected_withdrawal'].sum():,.2f}")
+        lines.append(f"ALL ACCOUNTS - Ben ${(rows['ben'] + rows['expenses']).sum():,.2f} / "
+                     f"Jesse ${rows['jesse'].sum():,.2f} / Kolby ${rows['kolby'].sum():,.2f} / "
+                     f"Seed ${rows['seed'].sum():,.2f} / Withdraw ${rows['expected_withdrawal'].sum():,.2f}")
     return "\n".join(lines)
 
 
