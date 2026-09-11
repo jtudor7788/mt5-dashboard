@@ -432,7 +432,7 @@ def chart_layout(fig, height, legend=False):
 
 
 def summary_text(wk):
-    rows = allp[(allp["week"] == wk)]
+    rows = allp[(allp["week"] == wk) & (allp["login"].isin(live))]
     lines = [f"Kona Wolf Trading - week of {wk:%b %d, %Y} (payout Fri {wk + timedelta(days=4):%b %d})", ""]
     for _, r in rows.iterrows():
         lines.append(f"{r['account']} (#{r['login']})")
