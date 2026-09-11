@@ -386,7 +386,8 @@ allp = pd.concat(payouts.values(), ignore_index=True) if payouts else pd.DataFra
 cur = allp[allp["week"] == this_week] if not allp.empty else pd.DataFrame()
 tracked = allp[allp["tracked"].astype(bool)] if not allp.empty else pd.DataFrame(columns=PAYOUT_COLS)
 
-daily_all = trades.groupby("date")["net"].sum().sort_index()
+stats_trades = trades[trades["date"] >= stats_from]
+daily_all = stats_trades.groupby("date")["net"].sum().sort_index()
 
 
 # ---------------------------------------------------------------- helpers
@@ -485,6 +486,10 @@ with st.sidebar:
     tcsv["time"] = tcsv["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
     st.download_button("Download trades (CSV)", tcsv.drop(columns=["date", "week"]).to_csv(index=False).encode(),
                        "trades.csv", "text/csv", use_container_width=True)
+    st.markdown(f"<div class='kw-label' style='margin-top:14px'>Stats from</div>", unsafe_allow_html=True)
+    stats_from = st.date_input("Stats from", value=date(2026, 6, 1), label_visibility="collapsed",
+                               help="Performance, calendar and risk stats start here. Payouts and all-time "
+                                    "totals are unaffected.")
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     if st.button("↻ Refresh data", use_container_width=True):
         st.cache_data.clear()
@@ -675,10 +680,11 @@ fig.add_scatter(x=list(cum.index), y=list(cum.values), mode="lines",
 fig.add_annotation(x=peak.index[-1], y=peak.iloc[-1], text=f"HWM {peak.iloc[-1]:,.0f}",
                    showarrow=False, yshift=12, font=dict(size=11, color=ACCENT))
 st.plotly_chart(chart_layout(fig, 360), use_container_width=True, config={"displayModeBar": False})
-st.markdown("<div class='kw-note'>Blue line is cumulative realised P&L across all accounts; the shaded band is drawdown from the high-water mark.</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='kw-note'>Blue line is cumulative realised P&L across all accounts since {stats_from:%b %d, %Y}; "
+            f"the shaded band is drawdown from the high-water mark.</div>", unsafe_allow_html=True)
 
 # monthly returns grid
-mret = trades.copy()
+mret = stats_trades.copy()
 mret["y"] = mret["time"].dt.year
 mret["m"] = mret["time"].dt.month
 grid = mret.groupby(["y", "m"])["net"].sum().unstack(fill_value=float("nan"))
@@ -822,7 +828,7 @@ if not expenses.empty:
 # ---------------------------------------------------------------- calendar
 section("Calendar")
 names = ["All accounts"] + [cfg[l]["nickname"] for l in logins]
-months = sorted({(d.year, d.month) for d in trades["date"]})
+months = sorted({(d.year, d.month) for d in stats_trades["date"]}) or [(today.year, today.month)]
 if "cal_idx" not in st.session_state:
     st.session_state.cal_idx = len(months) - 1
 r1 = st.columns([1, 1])
@@ -841,7 +847,7 @@ if r2[1].button("Next ▶", use_container_width=True, disabled=st.session_state.
     st.rerun()
 
 sel_login = None if sel == "All accounts" else logins[names.index(sel) - 1]
-tsel = trades if sel_login is None else trades[trades["login"] == sel_login]
+tsel = stats_trades if sel_login is None else stats_trades[stats_trades["login"] == sel_login]
 daily = tsel.groupby("date")["net"].sum()
 year, month = months[st.session_state.cal_idx]
 month_daily = daily[[d.year == year and d.month == month for d in daily.index]]
@@ -867,7 +873,7 @@ for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
 st.markdown(f"<div class='kw-cal'>{tiles}</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- risk & edge
-section(f"Risk & edge · {sel}")
+section(f"Risk & edge · {sel} · since {stats_from:%b %Y}")
 wins = tsel[tsel["net"] > 0]
 losses = tsel[tsel["net"] < 0]
 n = len(tsel)
