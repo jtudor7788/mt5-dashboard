@@ -313,6 +313,11 @@ frozen = {(r["week"], r["login"]): r for _, r in ledger.iterrows()} if not ledge
 
 
 # ---------------------------------------------------------------- payout engine
+PAYOUT_COLS = ["week", "login", "account", "gross", "expenses", "seed", "ben", "jesse",
+               "kolby", "ben_total", "expected_withdrawal", "withdrawn", "status",
+               "tracked", "in_progress", "frozen"]
+
+
 def compute_payouts(login):
     c = cfg[login]
     t = trades[trades["login"] == login]
@@ -370,15 +375,16 @@ def compute_payouts(login):
                     "seed": seed_pay, "ben": ben, "jesse": jesse, "kolby": kolby, "ben_total": ben + exp,
                     "expected_withdrawal": ben + jesse + kolby + exp + seed_pay, "withdrawn": withdrawn,
                     "status": status, "tracked": tracked, "in_progress": wk == this_week, "frozen": key in frozen})
-    return pd.DataFrame(out), seed_left
+    df = pd.DataFrame(out, columns=PAYOUT_COLS) if out else pd.DataFrame(columns=PAYOUT_COLS)
+    return df, seed_left
 
 
 payouts, seed_left = {}, {}
 for l in logins:
     payouts[l], seed_left[l] = compute_payouts(l)
-allp = pd.concat(payouts.values(), ignore_index=True) if payouts else pd.DataFrame()
+allp = pd.concat(payouts.values(), ignore_index=True) if payouts else pd.DataFrame(columns=PAYOUT_COLS)
 cur = allp[allp["week"] == this_week] if not allp.empty else pd.DataFrame()
-tracked = allp[allp["tracked"]] if not allp.empty else pd.DataFrame()
+tracked = allp[allp["tracked"].astype(bool)] if not allp.empty else pd.DataFrame(columns=PAYOUT_COLS)
 
 daily_all = trades.groupby("date")["net"].sum().sort_index()
 
