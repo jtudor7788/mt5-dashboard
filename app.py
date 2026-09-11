@@ -607,8 +607,7 @@ for l in live:
     bal = float(snap.get("balance", 0) or 0)
     above = bal - c_["base"]
     p = payouts[l]
-    wk = p[p["week"] == this_week]
-    wk_gross = wk["gross"].sum() if not wk.empty else 0
+    wk_gross = p.loc[p["week"] == this_week, "gross"].sum() if ("week" in p.columns and not p.empty) else 0
     t = trades[trades["login"] == l]
     today_pl = t.loc[t["date"] == today, "net"].sum()
     seed_total = c_["seed"]
@@ -621,11 +620,12 @@ for l in live:
     if not c_["is_master"]:
         drift = wk_gross - master_week
         parts.append(("vs main this week", f"{drift:+,.2f}", sgn(drift)))
-        done = p[~p["in_progress"]].tail(8).set_index("week")["gross"]
-        mdone = mp.set_index("week")["gross"].reindex(done.index).fillna(0)
-        if len(done):
-            avg_drift = (done - mdone).mean()
-            parts.append(("Avg drift · last 8 wks", f"{avg_drift:+,.2f}", sgn(avg_drift)))
+        if not p.empty and not mp.empty and "week" in p.columns and "week" in mp.columns:
+            done = p[~p["in_progress"].astype(bool)].tail(8).set_index("week")["gross"]
+            if len(done):
+                mdone = mp.set_index("week")["gross"].reindex(done.index).fillna(0)
+                avg_drift = (done - mdone).mean()
+                parts.append(("Avg drift · last 8 wks", f"{avg_drift:+,.2f}", sgn(avg_drift)))
     if seed_total > 0 and seed_left[l] > 0:
         parts.append((f"Owed to {c_['seed_holder']}", money(seed_left[l]), ""))
     html = "".join(f"<div><div class='k'>{k}</div><div class='v {cls}'>{v}</div></div>" for k, v, cls in parts)
@@ -765,7 +765,7 @@ if seeded:
     for l in seeded:
         c_ = cfg[l]
         p = payouts[l]
-        recent = p[(~p["in_progress"]) & p["tracked"]].tail(4)["seed"]
+        recent = p[(~p["in_progress"].astype(bool)) & p["tracked"].astype(bool)].tail(4)["seed"] if not p.empty else pd.Series(dtype=float)
         rate = recent.mean() if len(recent) else 0
         weeks_left = seed_left[l] / rate if rate > 0 else None
         eta = (this_week + timedelta(weeks=round(weeks_left))).strftime("%b %d, %Y") if weeks_left else "—"
