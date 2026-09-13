@@ -584,11 +584,16 @@ cards([(f"Today · {cfg[master]['nickname']}", money(main_today), sgn(main_today
        ("Today · all accounts", money(d_today), sgn(d_today), today_spark),
        ("Gross this week", money(g), sgn(g), week_spark),
        ("This month", money(d_month), sgn(d_month))])
+seed_owed = sum(seed_left[l] for l in live)
+seed_total = sum(cfg[l]["seed"] for l in live)
+seed_pct = (seed_total - seed_owed) / seed_total * 100 if seed_total else 0
 cards([(f"Seed → {seed_holders}", money(sd), ""),
+       (f"Seed still owed{' · ' + f'{seed_pct:.0f}% repaid' if seed_total else ''}",
+        money(seed_owed), "neg" if seed_owed > 0 else "pos"),
        ("Expenses on Ben's card", money(e), ""),
-       ("Jesse → Ben for half", money(half), ""),
-       ("Ben receives", money(b + e), sgn(b + e))])
-cards([("Jesse receives", money(j), sgn(j))] +
+       ("Jesse → Ben for half", money(half), "")])
+cards([("Ben receives", money(b + e), sgn(b + e)),
+       ("Jesse receives", money(j), sgn(j))] +
       ([("Kolby receives", money(k), sgn(k))] if any_kolby else []))
 st.markdown(f"<div class='kw-note'>Profit splits 50/50 at {money(share)} each. Expenses of {money(e)} were paid on Ben's card, so Jesse's half ({money(half)}) "
             f"moves from Jesse's share to Ben. Ben receives {money(share)} + {money(half)} = {money(b + e)}. Jesse receives {money(share)} − {money(half)} = {money(j)}.</div>",
