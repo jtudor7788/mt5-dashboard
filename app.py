@@ -577,17 +577,19 @@ week_spark = spark(wk_days.cumsum(), GREEN if g >= 0 else RED)
 today_spark = spark(today_trades["net"].cumsum(), GREEN if d_today >= 0 else RED)
 
 st.markdown(f"<div class='kw-note' style='margin-bottom:10px'>Week of {this_week:%B %d} · {len(live)} account{'s' if len(live) != 1 else ''} · payout Friday {this_week + timedelta(days=4):%B %d}</div>", unsafe_allow_html=True)
-cards([("Today", money(d_today), sgn(d_today), today_spark),
+main_today = trades[(trades["login"] == master) & (trades["date"] == today)]["net"].sum()
+main_today_spark = spark(trades[(trades["login"] == master) & (trades["date"] == today)]
+                         .sort_values("time")["net"].cumsum(), GREEN if main_today >= 0 else RED)
+cards([(f"Today · {cfg[master]['nickname']}", money(main_today), sgn(main_today), main_today_spark),
+       ("Today · all accounts", money(d_today), sgn(d_today), today_spark),
        ("Gross this week", money(g), sgn(g), week_spark),
-       ("This month", money(d_month), sgn(d_month)),
-       (f"Seed → {seed_holders}", money(sd), "")])
-cards([("Expenses on Ben's card", money(e), ""),
+       ("This month", money(d_month), sgn(d_month))])
+cards([(f"Seed → {seed_holders}", money(sd), ""),
+       ("Expenses on Ben's card", money(e), ""),
        ("Jesse → Ben for half", money(half), ""),
-       ("Ben receives", money(b + e), sgn(b + e)),
-       ("Jesse receives", money(j), sgn(j))])
-if any_kolby:
-    cards([("Kolby receives", money(k), sgn(k)),
-           ("Ben / Jesse split each", money(share), sgn(share))])
+       ("Ben receives", money(b + e), sgn(b + e))])
+cards([("Jesse receives", money(j), sgn(j))] +
+      ([("Kolby receives", money(k), sgn(k))] if any_kolby else []))
 st.markdown(f"<div class='kw-note'>Profit splits 50/50 at {money(share)} each. Expenses of {money(e)} were paid on Ben's card, so Jesse's half ({money(half)}) "
             f"moves from Jesse's share to Ben. Ben receives {money(share)} + {money(half)} = {money(b + e)}. Jesse receives {money(share)} − {money(half)} = {money(j)}.</div>",
             unsafe_allow_html=True)
