@@ -394,6 +394,14 @@ stats_from = st.sidebar.date_input(
 EXCLUDED_DAYS = {date(2026, 6, 24)}   # Nurp bleed-over trades, not ours
 
 stats_trades = trades[(trades["date"] >= stats_from) & (~trades["date"].isin(EXCLUDED_DAYS))]
+
+# capital in play on a given date: accounts that had started trading by then
+first_trade = trades.groupby("login")["date"].min().to_dict()
+
+
+def base_at(d):
+    b = sum(cfg[l]["base"] for l in cfg if first_trade.get(l) and first_trade[l] <= d)
+    return b or BASE_TOTAL
 daily_all = stats_trades.groupby("date")["net"].sum().sort_index()
 
 
@@ -643,7 +651,7 @@ for l in live:
     parts = [("Balance", money(bal), ""), (f"Above {c_['base'] / 1000:.0f}k", f"{above:+,.2f}", sgn(above)),
              ("This week", f"{wk_gross:+,.2f}", sgn(wk_gross)), ("Today", f"{today_pl:+,.2f}", sgn(today_pl))]
     ml = float(snap.get("margin_level") or 0)
-    if ml:
+    if ml and ml == ml:   # skip 0 and NaN (no open positions / not reported)
         parts.append(("Margin level", f"{ml:,.0f}%", "neg" if ml < 200 else ""))
     if not c_["is_master"]:
         drift = wk_gross - master_week
@@ -707,7 +715,7 @@ for y in sorted(grid.index):
         if v is None or v != v:
             cells += "<td style='color:#3A465C'>—</td>"
         else:
-            pct = v / BASE_TOTAL * 100
+            pct = v / base_at(date(y, m, 28)) * 100
             ytd += pct
             a = min(abs(pct) / 8, 1) * 0.5
             bg = f"rgba(47,191,113,{a:.2f})" if pct >= 0 else f"rgba(229,72,77,{a:.2f})"
@@ -718,7 +726,8 @@ for y in sorted(grid.index):
 mons = "".join(f"<th>{m}</th>" for m in ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
 st.markdown(f"<div class='kw-mret'><table><thead><tr><th>Year</th>{mons}<th>YTD</th></tr></thead><tbody>{rows_html}</tbody></table></div>",
             unsafe_allow_html=True)
-st.markdown(f"<div class='kw-note'>Monthly return on trading capital (${BASE_TOTAL:,.0f} base).</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='kw-note'>Monthly return on the trading capital live that month "
+            f"(${BASE_TOTAL:,.0f} today).</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- friday summary
 section("Friday summary")
@@ -794,7 +803,8 @@ if seeded:
     for l in seeded:
         c_ = cfg[l]
         p = payouts[l]
-        recent = p[(~p["in_progress"].astype(bool)) & p["tracked"].astype(bool)].tail(4)["seed"] if not p.empty else pd.Series(dtype=float)
+        paid_weeks = p[p["tracked"].astype(bool) & (p["seed"] > 0)]["seed"] if not p.empty else pd.Series(dtype=float)
+        recent = paid_weeks.tail(4)
         rate = recent.mean() if len(recent) else 0
         weeks_left = seed_left[l] / rate if rate > 0 else None
         eta = (this_week + timedelta(weeks=round(weeks_left))).strftime("%b %d, %Y") if weeks_left else "—"
@@ -862,7 +872,7 @@ daily = tsel.groupby("date")["net"].sum()
 year, month = months[st.session_state.cal_idx]
 month_daily = daily[[d.year == year and d.month == month for d in daily.index]]
 m_total = month_daily.sum()
-base_for_pct = BASE_TOTAL if sel_login is None else cfg[sel_login]["base"]
+base_for_pct = base_at(date(year, month, 28)) if sel_login is None else cfg[sel_login]["base"]
 col = GREEN if m_total >= 0 else RED
 st.markdown(f"<div class='kw-monthline'><span style='color:{TEXT};font-size:17px'>{calendar.month_name[month]} {year}</span>"
             f"&nbsp;&nbsp;<span style='color:{col}'>{m_total:+,.2f}</span>"
@@ -914,7 +924,7 @@ max_dd_curve = under.min() if len(under) else 0
 cards([("Win rate", f"{len(wins) / n * 100 if n else 0:.0f}%", ""),
        ("Profit factor", f"{pf:.2f}", ""),
        ("Expectancy / trade", f"{expectancy:+,.2f}", sgn(expectancy)),
-       ("Sharpe (weekly, ann.)", f"{sharpe:.2f}", "")])
+       (f"Sharpe{' · small sample' if len(wret) < 26 else ''}", f"{sharpe:.2f}", "")])
 rr_ratio = (aw / abs(al)) if al else 0
 cards([("Avg win / loss", f"{aw:,.0f} / {al:,.0f}", "small"),
        ("Risk : reward", f"1 : {rr_ratio:.2f}", "small"),
@@ -950,8 +960,9 @@ else:
                 customdata=by_hour[["trades", "winrate"]].values,
                 hovertemplate="%{x} ET<br>%{y:,.0f}<br>%{customdata[0]:.0f} trades · %{customdata[1]:.0f}% wins<extra></extra>")
     st.plotly_chart(chart_layout(fig, 260), use_container_width=True, config={"displayModeBar": False})
-    best_h = by_hour["net"].idxmax()
-    worst_h = by_hour["net"].idxmin()
+    traded_h = by_hour[by_hour["trades"] > 0]
+    best_h = traded_h["net"].idxmax() if not traded_h.empty else 0
+    worst_h = traded_h["net"].idxmin() if not traded_h.empty else 0
     st.markdown(f"<div class='kw-note'>Net P&L by hour of the day, Eastern. Best hour {best_h:02d}:00 "
                 f"({money(by_hour.loc[best_h, 'net'])}) · weakest {worst_h:02d}:00 "
                 f"({money(by_hour.loc[worst_h, 'net'])}).</div>", unsafe_allow_html=True)
@@ -966,10 +977,13 @@ else:
                 customdata=by_dow[["trades", "winrate"]].values,
                 hovertemplate="%{x}<br>%{y:,.0f}<br>%{customdata[0]:.0f} trades · %{customdata[1]:.0f}% wins<extra></extra>")
     st.plotly_chart(chart_layout(fig, 220), use_container_width=True, config={"displayModeBar": False})
-    bd = by_dow["net"].idxmax()
-    wd = by_dow["net"].idxmin()
-    st.markdown(f"<div class='kw-note'>Net P&L by weekday. Best {names[bd]} ({money(by_dow.loc[bd, 'net'])}) · "
-                f"weakest {names[wd]} ({money(by_dow.loc[wd, 'net'])}).</div>", unsafe_allow_html=True)
+    traded = by_dow[by_dow["trades"] > 0]
+    if not traded.empty:
+        bd = traded["net"].idxmax()
+        wd = traded["net"].idxmin()
+        st.markdown(f"<div class='kw-note'>Net P&L by weekday, days you actually traded. Best {names[bd]} "
+                    f"({money(traded.loc[bd, 'net'])}) · weakest {names[wd]} ({money(traded.loc[wd, 'net'])}). "
+                    f"Sunday is the evening session that opens the week.</div>", unsafe_allow_html=True)
 
     if "symbol" in tw.columns and tw["symbol"].nunique() > 0:
         sym = tw.groupby("symbol")["net"].agg(["sum", "count", lambda x: (x > 0).mean() * 100])
