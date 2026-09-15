@@ -915,10 +915,13 @@ cards([("Win rate", f"{len(wins) / n * 100 if n else 0:.0f}%", ""),
        ("Profit factor", f"{pf:.2f}", ""),
        ("Expectancy / trade", f"{expectancy:+,.2f}", sgn(expectancy)),
        ("Sharpe (weekly, ann.)", f"{sharpe:.2f}", "")])
+rr_ratio = (aw / abs(al)) if al else 0
 cards([("Avg win / loss", f"{aw:,.0f} / {al:,.0f}", "small"),
+       ("Risk : reward", f"1 : {rr_ratio:.2f}", "small"),
        ("Best green streak", f"{best_streak} days", "pos"),
-       ("Max drawdown (curve)", money(max_dd_curve), "neg" if max_dd_curve < 0 else ""),
-       ("Losing days in a row", f"{streak}", "neg" if streak else "")])
+       ("Max drawdown (curve)", money(max_dd_curve), "neg" if max_dd_curve < 0 else "")])
+cards([("Losing days in a row", f"{streak}", "neg" if streak else "")] +
+      ([("Symbols traded", f"{tsel['symbol'].nunique()}", "")] if "symbol" in tsel.columns else []))
 st.markdown(f"<div class='kw-note'>Excludes {', '.join(d.strftime('%b %d, %Y') for d in sorted(EXCLUDED_DAYS))} "
             f"(carried-over trades from the previous provider).</div>", unsafe_allow_html=True)
 worst_day = daily.min() if len(daily) else 0
@@ -929,6 +932,54 @@ cards([("Worst day", money(worst_day), sgn(worst_day)),
        ("Trades", f"{n:,}", "")])
 
 # ---------------------------------------------------------------- trades
+# ---------------------------------------------------------------- when you trade best
+section(f"When you trade best · {sel}")
+if tsel.empty:
+    st.caption("No trades in this window.")
+else:
+    tw = tsel.copy()
+    tw["hour"] = tw["time"].dt.hour
+    tw["dow"] = tw["time"].dt.dayofweek
+
+    by_hour = tw.groupby("hour")["net"].agg(["sum", "count", lambda x: (x > 0).mean() * 100])
+    by_hour.columns = ["net", "trades", "winrate"]
+    by_hour = by_hour.reindex(range(24), fill_value=0)
+    fig = go.Figure()
+    fig.add_bar(x=[f"{h:02d}:00" for h in by_hour.index], y=by_hour["net"],
+                marker_color=[GREEN if v >= 0 else RED for v in by_hour["net"]],
+                customdata=by_hour[["trades", "winrate"]].values,
+                hovertemplate="%{x} ET<br>%{y:,.0f}<br>%{customdata[0]:.0f} trades · %{customdata[1]:.0f}% wins<extra></extra>")
+    st.plotly_chart(chart_layout(fig, 260), use_container_width=True, config={"displayModeBar": False})
+    best_h = by_hour["net"].idxmax()
+    worst_h = by_hour["net"].idxmin()
+    st.markdown(f"<div class='kw-note'>Net P&L by hour of the day, Eastern. Best hour {best_h:02d}:00 "
+                f"({money(by_hour.loc[best_h, 'net'])}) · weakest {worst_h:02d}:00 "
+                f"({money(by_hour.loc[worst_h, 'net'])}).</div>", unsafe_allow_html=True)
+
+    names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    by_dow = tw.groupby("dow")["net"].agg(["sum", "count", lambda x: (x > 0).mean() * 100])
+    by_dow.columns = ["net", "trades", "winrate"]
+    by_dow = by_dow.reindex(range(7), fill_value=0)
+    fig = go.Figure()
+    fig.add_bar(x=names, y=by_dow["net"],
+                marker_color=[GREEN if v >= 0 else RED for v in by_dow["net"]],
+                customdata=by_dow[["trades", "winrate"]].values,
+                hovertemplate="%{x}<br>%{y:,.0f}<br>%{customdata[0]:.0f} trades · %{customdata[1]:.0f}% wins<extra></extra>")
+    st.plotly_chart(chart_layout(fig, 220), use_container_width=True, config={"displayModeBar": False})
+    bd = by_dow["net"].idxmax()
+    wd = by_dow["net"].idxmin()
+    st.markdown(f"<div class='kw-note'>Net P&L by weekday. Best {names[bd]} ({money(by_dow.loc[bd, 'net'])}) · "
+                f"weakest {names[wd]} ({money(by_dow.loc[wd, 'net'])}).</div>", unsafe_allow_html=True)
+
+    if "symbol" in tw.columns and tw["symbol"].nunique() > 0:
+        sym = tw.groupby("symbol")["net"].agg(["sum", "count", lambda x: (x > 0).mean() * 100])
+        sym.columns = ["Net P&L", "Trades", "Win %"]
+        sym = sym.sort_values("Net P&L", ascending=False).reset_index()
+        sym.columns = ["Symbol", "Net P&L", "Trades", "Win %"]
+        st.dataframe(sym, use_container_width=True, hide_index=True,
+                     column_config={"Net P&L": st.column_config.NumberColumn(format="dollar"),
+                                    "Win %": st.column_config.NumberColumn(format="%.0f%%")})
+
 section(f"Trades · {sel}")
 tab_open, tab_closed = st.tabs(["Open", "Closed"])
 with tab_open:
