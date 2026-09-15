@@ -921,8 +921,10 @@ cards([("Avg win / loss", f"{aw:,.0f} / {al:,.0f}", "small"),
        ("Losing days in a row", f"{streak}", "neg" if streak else "")])
 st.markdown(f"<div class='kw-note'>Excludes {', '.join(d.strftime('%b %d, %Y') for d in sorted(EXCLUDED_DAYS))} "
             f"(carried-over trades from the previous provider).</div>", unsafe_allow_html=True)
-cards([("Worst day", money(daily.min() if len(daily) else 0), "neg"),
-       ("Worst week", money(weekly_sel.min() if len(weekly_sel) else 0), "neg"),
+worst_day = daily.min() if len(daily) else 0
+worst_week = weekly_sel.min() if len(weekly_sel) else 0
+cards([("Worst day", money(worst_day), sgn(worst_day)),
+       ("Worst week" + ("" if worst_week < 0 else " (no losing week)"), money(worst_week), sgn(worst_week)),
        ("Deepest dip below base", money(dd), "neg" if dd < 0 else ""),
        ("Trades", f"{n:,}", "")])
 
