@@ -448,7 +448,8 @@ def chart_layout(fig, height, legend=False):
 
 
 def summary_text(wk):
-    rows = allp[(allp["week"] == wk) & (allp["login"].isin(live))]
+    keep = logins if st.session_state.get("inc_arch") else live
+    rows = allp[(allp["week"] == wk) & (allp["login"].isin(keep))]
     lines = [f"Kona Wolf Trading - week of {wk:%b %d, %Y} (payout Fri {wk + timedelta(days=4):%b %d})", ""]
     for _, r in rows.iterrows():
         c = cfg[r["login"]]
@@ -731,6 +732,10 @@ st.markdown(f"<div class='kw-note'>Monthly return on the trading capital live th
 
 # ---------------------------------------------------------------- friday summary
 section("Friday summary")
+inc_arch = st.checkbox("Include archived accounts that traded this week",
+                       value=False, key="inc_arch",
+                       help="Turn on during a week you switched accounts, so the summary covers money "
+                            "earned on the retired account too.")
 week_opts = sorted(tracked["week"].unique(), reverse=True) if not tracked.empty else [this_week]
 wsel = st.selectbox("Week", week_opts, format_func=lambda w: f"Week of {w:%b %d}" + (" (in progress)" if w == this_week else ""), label_visibility="collapsed")
 st.code(summary_text(wsel), language=None)
