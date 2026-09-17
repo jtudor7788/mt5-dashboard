@@ -244,6 +244,10 @@ def week_of(d):
 # Newer rows carry a measured true-UTC stamp from the collector; older rows are
 # broker-clock and get the legacy -7h correction. Days are Eastern, midnight to midnight.
 raw = pd.to_datetime(deals["time"], utc=True)
+# broker-clock milliseconds for copy-delay math (both accounts share the server clock)
+deals["t_ms"] = (raw - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta(milliseconds=1)
+if "time_msc" in deals.columns:
+    deals["t_ms"] = pd.to_numeric(deals["time_msc"], errors="coerce").fillna(deals["t_ms"]).astype("int64")
 if "time_utc" in deals.columns:
     fixed = pd.to_datetime(deals["time_utc"], utc=True, errors="coerce")
 else:
@@ -696,6 +700,168 @@ if archived:
     st.markdown(f"<div class='kw-note'>Archived: {' · '.join(bits)}. Closed accounts stay in every all-time "
                 f"figure, the calendar and the trade history; they are no longer collected.</div>",
                 unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- copy slippage
+ORDER_KIND = {0: "Market", 1: "Market", 2: "Limit", 3: "Limit", 4: "Stop", 5: "Stop", 6: "Stop", 7: "Stop"}
+REASON_KIND = {4: "Stop loss", 5: "Take profit", 6: "Stop out"}
+SLIP_BEFORE_MS, SLIP_AFTER_MS = 5_000, 30_000   # copy may land up to 5s before / 30s after Main
+
+
+def deal_kind(r):
+    rs = r.get("reason")
+    if not pd.isna(rs) and int(rs) in REASON_KIND:
+        return REASON_KIND[int(rs)]
+    ot = r.get("order_type")
+    if not pd.isna(ot) and int(ot) in ORDER_KIND:
+        leg = "in" if r["entry"] == 0 else "out"
+        return f"{ORDER_KIND[int(ot)]} {leg}"
+    return "Unclassified"
+
+
+def contract_sizes(d):
+    """Units per lot per symbol, measured from closed positions (profit ÷ price move ÷ lots)."""
+    sizes = {}
+    if "position_id" not in d.columns:
+        return sizes
+    ins = d[d["entry"] == 0].drop_duplicates(["login", "position_id"]).set_index(["login", "position_id"])
+    outs = d[d["entry"].isin([1, 3]) & d["type"].isin([0, 1])]
+    est = []
+    for _, o in outs.iterrows():
+        k = (o["login"], o["position_id"])
+        if k not in ins.index:
+            continue
+        i = ins.loc[k]
+        move = (o["price"] - i["price"]) * (1 if i["type"] == 0 else -1)
+        if abs(move) > 1e-9 and o["volume"] and o["profit"]:
+            est.append((o["symbol"], o["profit"] / (move * o["volume"])))
+    if est:
+        e = pd.DataFrame(est, columns=["symbol", "cs"])
+        e = e[e["cs"] > 0]
+        sizes = e.groupby("symbol")["cs"].median().to_dict()
+    return sizes
+
+
+def match_copies(d, masters, copies):
+    """Pair each copy deal with the Main deal it copied: same symbol, side and leg, nearest in time, one-to-one."""
+    cols = ["login", "ticket", "symbol", "type", "entry", "volume", "price", "t_ms", "time", "reason", "order_type"]
+    base = d[d["type"].isin([0, 1]) & d["entry"].isin([0, 1, 3])].copy()
+    for c in ("reason", "order_type"):
+        if c not in base.columns:
+            base[c] = pd.NA
+    base["leg"] = base["entry"].map(lambda e: "in" if e == 0 else "out")
+    m_all = base[base["login"].isin(masters)]
+    out, unmatched = [], 0
+    for cl in copies:
+        c_all = base[base["login"] == cl]
+        for key, cg in c_all.groupby(["symbol", "type", "leg"]):
+            mg = m_all[(m_all["symbol"] == key[0]) & (m_all["type"] == key[1]) & (m_all["leg"] == key[2])]
+            if mg.empty:
+                unmatched += len(cg)
+                continue
+            mt = mg["t_ms"].to_numpy()
+            order = mt.argsort()
+            mt_sorted = mt[order]
+            pairs = []
+            for ci, ct in zip(cg.index, cg["t_ms"].to_numpy()):
+                lo = mt_sorted.searchsorted(ct - SLIP_AFTER_MS)
+                hi = mt_sorted.searchsorted(ct + SLIP_BEFORE_MS, side="right")
+                for j in range(lo, hi):
+                    pairs.append((abs(ct - mt_sorted[j]), ci, mg.index[order[j]]))
+            pairs.sort()
+            used_c, used_m = set(), set()
+            for _, ci, mi in pairs:
+                if ci in used_c or mi in used_m:
+                    continue
+                used_c.add(ci)
+                used_m.add(mi)
+                c, m = base.loc[ci], base.loc[mi]
+                edge = (m["price"] - c["price"]) if c["type"] == 0 else (c["price"] - m["price"])
+                out.append({"copy_login": cl, "symbol": key[0], "side": "Buy" if key[1] == 0 else "Sell",
+                            "leg": key[2], "kind": deal_kind(m), "time": c["time"],
+                            "main_price": m["price"], "copy_price": c["price"], "edge": edge,
+                            "copy_volume": c["volume"], "delay_ms": c["t_ms"] - m["t_ms"],
+                            "copy_ticket": c["ticket"], "main_ticket": m["ticket"]})
+            unmatched += len(cg) - len(used_c)
+    return pd.DataFrame(out), unmatched
+
+
+section("Copy slippage")
+slip_masters = [l for l in logins if cfg[l]["is_master"]]
+slip_copies = [l for l in logins if not cfg[l]["is_master"]]
+if not slip_masters or not slip_copies or "t_ms" not in deals.columns:
+    st.caption("Needs a master and at least one copy account.")
+else:
+    sc = st.columns([1, 1])
+    window = sc[0].selectbox("Window", ["Today", "This week", "Last 7 days", "Last 30 days", "Since stats date"],
+                             index=1, label_visibility="collapsed", key="slip_window")
+    w_from = {"Today": today, "This week": this_week, "Last 7 days": today - timedelta(days=6),
+              "Last 30 days": today - timedelta(days=29), "Since stats date": stats_from}[window]
+    in_win = deals[(deals["date"] >= w_from) & (~deals["date"].isin(EXCLUDED_DAYS))]
+    pairs, unmatched = match_copies(in_win, slip_masters, slip_copies)
+    syms = sorted(pairs["symbol"].unique()) if not pairs.empty else []
+    default_sym = next((s for s in syms if s.upper().startswith("XAU")), syms[0] if syms else None)
+    sym = sc[1].selectbox("Symbol", syms or ["—"], index=syms.index(default_sym) if syms else 0,
+                          label_visibility="collapsed", key="slip_sym")
+    if pairs.empty:
+        st.caption("No copied trades in this window yet.")
+    else:
+        sizes = contract_sizes(deals)
+        p = pairs[pairs["symbol"] == sym].copy()
+        cs = sizes.get(sym, 100.0 if str(sym).upper().startswith("XAU") else 100000.0)
+        p["usd"] = p["edge"] * p["copy_volume"] * cs
+        has_ms = in_win["time_msc"].notna().any() if "time_msc" in in_win.columns else False
+        ins, outs = p[p["leg"] == "in"], p[p["leg"] == "out"]
+        total = p["usd"].sum()
+        worse = (p["edge"] < 0).mean() * 100 if len(p) else 0
+        cards([("Copy fills vs Main", f"{total:+,.2f}", sgn(total)),
+               ("Avg entry edge", f"{ins['edge'].mean():+.2f}" if len(ins) else "—", sgn(ins["edge"].mean()) if len(ins) else ""),
+               ("Avg exit edge", f"{outs['edge'].mean():+.2f}" if len(outs) else "—", sgn(outs["edge"].mean()) if len(outs) else ""),
+               ("Median copy delay", (f"{p['delay_ms'].median():,.0f} ms" if has_ms else f"{p['delay_ms'].median() / 1000:,.0f} s"), "")])
+        worst = p["usd"].min()
+        cards([("Matched fills", f"{len(p):,}", ""),
+               ("Filled worse than Main", f"{worse:.0f}%", "neg" if worse > 50 else ""),
+               ("Worst single fill", money(worst), sgn(worst)),
+               ("Unmatched copy deals", f"{unmatched:,}", "neg" if unmatched else "")])
+        st.markdown(f"<div class='kw-note'>Every copy fill paired with the Main fill it copied. Edge is price per unit "
+                    f"(+ copy filled better, − worse); dollars are edge × copy lots × {cs:,.0f}. "
+                    f"{'Delay is copy fill time minus Main fill time.' if has_ms else 'Delay shows whole seconds until the collector update fills in millisecond times.'}"
+                    f"</div>", unsafe_allow_html=True)
+
+        t_kind, t_hour, t_rows = st.tabs(["By order type", "By hour", "Fills"])
+        with t_kind:
+            g = p.groupby("kind").agg(Fills=("edge", "size"), AvgEdge=("edge", "mean"),
+                                      WorsePct=("edge", lambda x: (x < 0).mean() * 100),
+                                      Delay=("delay_ms", "median"), USD=("usd", "sum")).reset_index()
+            g = g.sort_values("USD")
+            g.columns = ["Type", "Fills", "Avg edge", "Worse %", "Median delay ms", "$ vs Main"]
+            st.dataframe(g, use_container_width=True, hide_index=True,
+                         column_config={"Avg edge": st.column_config.NumberColumn(format="%+.2f"),
+                                        "Worse %": st.column_config.NumberColumn(format="%.0f%%"),
+                                        "Median delay ms": st.column_config.NumberColumn(format="%d"),
+                                        "$ vs Main": st.column_config.NumberColumn(format="dollar")})
+            if (p["kind"] == "Unclassified").any():
+                st.markdown("<div class='kw-note'>Unclassified fills were collected before order types were stored. "
+                            "Run the one-time backfill on the VPS to classify them.</div>", unsafe_allow_html=True)
+        with t_hour:
+            p["hour"] = p["time"].dt.hour
+            bh = p.groupby("hour")["usd"].agg(["sum", "count"]).reindex(range(24), fill_value=0)
+            fig = go.Figure()
+            fig.add_bar(x=[f"{h:02d}:00" for h in bh.index], y=bh["sum"],
+                        marker_color=[GREEN if v >= 0 else RED for v in bh["sum"]], customdata=bh["count"],
+                        hovertemplate="%{x} ET<br>%{y:+,.2f}<br>%{customdata} fills<extra></extra>")
+            st.plotly_chart(chart_layout(fig, 240), use_container_width=True, config={"displayModeBar": False})
+            st.markdown("<div class='kw-note'>Copy fill dollars vs Main by hour, Eastern. Red bars are when the copier costs you.</div>",
+                        unsafe_allow_html=True)
+        with t_rows:
+            show = p.sort_values("time", ascending=False).head(300).copy()
+            show["time"] = show["time"].dt.strftime("%m-%d %H:%M:%S")
+            show["account"] = show["copy_login"].map(lambda l: cfg[l]["nickname"])
+            show = show[["time", "kind", "side", "main_price", "copy_price", "edge", "usd", "delay_ms", "copy_volume", "account"]]
+            show.columns = ["Time", "Type", "Side", "Main", "Copy", "Edge", "$", "Delay ms", "Lots", "Account"]
+            st.dataframe(show, use_container_width=True, hide_index=True,
+                         column_config={"Edge": st.column_config.NumberColumn(format="%+.2f"),
+                                        "$": st.column_config.NumberColumn(format="%+.2f"),
+                                        "Delay ms": st.column_config.NumberColumn(format="%d")})
 
 # ---------------------------------------------------------------- performance: equity + drawdown, monthly grid
 section("Performance")
