@@ -589,10 +589,22 @@ st.markdown(f"<div class='kw-note' style='margin-bottom:10px'>Week of {this_week
 main_today = trades[(trades["login"] == master) & (trades["date"] == today)]["net"].sum()
 main_today_spark = spark(trades[(trades["login"] == master) & (trades["date"] == today)]
                          .sort_values("time")["net"].cumsum(), GREEN if main_today >= 0 else RED)
+# rolling windows off the live clock
+now_ts = pd.Timestamp.now(tz=DAY_TZ)
+last_15 = trades[trades["time"] >= now_ts - pd.Timedelta(minutes=15)]
+last_60 = trades[trades["time"] >= now_ts - pd.Timedelta(hours=1)]
+p15 = last_15["net"].sum()
+p60 = last_60["net"].sum()
+spark60 = spark(last_60.sort_values("time")["net"].cumsum(), GREEN if p60 >= 0 else RED)
+
 cards([(f"Today · {cfg[master]['nickname']}", money(main_today), sgn(main_today), main_today_spark),
        ("Today · all accounts", money(d_today), sgn(d_today), today_spark),
        ("Gross this week", money(g), sgn(g), week_spark),
        ("This month", money(d_month), sgn(d_month))])
+cards([(f"Last 15 min · {len(last_15)} trade{'s' if len(last_15) != 1 else ''}",
+        money(p15), sgn(p15)),
+       (f"Last hour · {len(last_60)} trade{'s' if len(last_60) != 1 else ''}",
+        money(p60), sgn(p60), spark60)])
 seed_owed = sum(seed_left[l] for l in live)
 seed_total = sum(cfg[l]["seed"] for l in live)
 seed_pct = (seed_total - seed_owed) / seed_total * 100 if seed_total else 0
