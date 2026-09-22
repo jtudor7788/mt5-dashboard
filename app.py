@@ -282,6 +282,7 @@ for login in acct["login"]:
         "prior_seed": float(row.get("prior_seed") or 0),
         "active": bool(row.get("active", True)),
         "kolby_pct": float(row.get("kolby_pct") or 0),
+        "seed_carry_from": int(row["seed_carry_from"]) if row.get("seed_carry_from") == row.get("seed_carry_from") and row.get("seed_carry_from") else None,
         "prior_kolby": float(row.get("prior_kolby") or 0),
     }
 logins = sorted(cfg, key=lambda l: (not cfg[l]["is_master"], cfg[l]["nickname"]))
@@ -318,11 +319,11 @@ PAYOUT_COLS = ["week", "login", "account", "gross", "expenses", "seed", "ben", "
                "tracked", "in_progress", "frozen"]
 
 
-def compute_payouts(login):
+def compute_payouts(login, carried_left=None):
     c = cfg[login]
     t = trades[trades["login"] == login]
     weekly = t.groupby("week")["net"].sum().sort_index()
-    seed_left = max(c["seed"] - c["seed_repaid"], 0.0)
+    seed_left = carried_left if carried_left is not None else max(c["seed"] - c["seed_repaid"], 0.0)
     carry = 0.0
     out = []
     for wk, gross in weekly.items():
@@ -382,8 +383,21 @@ def compute_payouts(login):
 
 
 payouts, seed_left = {}, {}
-for l in logins:
-    payouts[l], seed_left[l] = compute_payouts(l)
+pending = list(logins)
+while pending:
+    progressed = False
+    for l in list(pending):
+        src = cfg[l]["seed_carry_from"]
+        if src and src in cfg and src not in payouts:
+            continue   # wait until the account it carries from is computed
+        carried = seed_left[src] if src and src in seed_left else None
+        payouts[l], seed_left[l] = compute_payouts(l, carried)
+        pending.remove(l)
+        progressed = True
+    if not progressed:   # broken chain in settings - compute the rest standalone
+        for l in pending:
+            payouts[l], seed_left[l] = compute_payouts(l)
+        break
 allp = pd.concat(payouts.values(), ignore_index=True) if payouts else pd.DataFrame(columns=PAYOUT_COLS)
 cur = allp[allp["week"] == this_week] if not allp.empty else pd.DataFrame()
 tracked = allp[allp["tracked"].astype(bool)] if not allp.empty else pd.DataFrame(columns=PAYOUT_COLS)
@@ -627,6 +641,8 @@ st.markdown(f"<div class='kw-note'>Profit splits 50/50 at {money(share)} each. E
 prior_ben = sum(cfg[l]["prior_ben"] for l in logins)
 prior_jesse = sum(cfg[l]["prior_jesse"] for l in logins)
 prior_seed = sum(cfg[l]["prior_seed"] for l in logins)
+ben_seed_repaid = sum(p["seed"].sum() for l, p in payouts.items()
+                      if cfg[l]["seed_holder"] == "Ben" and cfg[l]["seed"] > 0 and not p.empty)
 prior_kolby = sum(cfg[l]["prior_kolby"] for l in logins)
 if not tracked.empty or prior_ben or prior_jesse or prior_seed:
     section("Totals to date")
@@ -637,7 +653,7 @@ if not tracked.empty or prior_ben or prior_jesse or prior_seed:
     tg = tracked["gross"].sum() if not tracked.empty else 0
     cards([("Ben · all time", money(prior_ben + tb), "pos"),
            ("Jesse · all time", money(prior_jesse + tj), "pos"),
-           ("Seed repaid to date", money(prior_seed + ts_), ""),
+           ("Ben's seed repaid", money(ben_seed_repaid), ""),
            ("Expenses on Ben's card · since ledger", money(te), "")])
     tk = tracked["kolby"].sum() if not tracked.empty else 0
     r = [("Ben · since ledger", money(tb), "pos"),
