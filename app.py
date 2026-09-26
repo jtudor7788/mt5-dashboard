@@ -768,10 +768,15 @@ section("Weekly & monthly by account")
 if stats_trades.empty:
     st.caption("No trades in this window.")
 else:
+    # label must be unique per login - two closed accounts can share a nickname,
+    # and a duplicate column name would merge them and double every total
+    def acct_label(l):
+        return f"{cfg[l]['nickname']} #{l}" + ("" if cfg[l]["active"] else " (closed)")
+
     bd = stats_trades.copy()
-    bd["acct"] = bd["login"].map(lambda l: cfg[l]["nickname"] + ("" if cfg[l]["active"] else " (closed)"))
-    order = [cfg[l]["nickname"] + ("" if cfg[l]["active"] else " (closed)")
-             for l in logins if cfg[l]["nickname"] + ("" if cfg[l]["active"] else " (closed)") in set(bd["acct"])]
+    bd["acct"] = bd["login"].map(acct_label)
+    seen = set(bd["acct"])
+    order = list(dict.fromkeys(acct_label(l) for l in logins if acct_label(l) in seen))
     bd["month"] = bd["time"].dt.to_period("M")
 
     def money_table(pivot, label_fmt, head):
