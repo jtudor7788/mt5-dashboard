@@ -761,6 +761,53 @@ st.markdown(f"<div class='kw-mret'><table><thead><tr><th>Year</th>{mons}<th>YTD<
 st.markdown(f"<div class='kw-note'>Monthly return on the trading capital live that month "
             f"(${BASE_TOTAL:,.0f} today).</div>", unsafe_allow_html=True)
 
+# ---------------------------------------------------------------- per-account breakdown
+section("Weekly & monthly by account")
+if stats_trades.empty:
+    st.caption("No trades in this window.")
+else:
+    bd = stats_trades.copy()
+    bd["acct"] = bd["login"].map(lambda l: cfg[l]["nickname"] + ("" if cfg[l]["active"] else " (closed)"))
+    order = [cfg[l]["nickname"] + ("" if cfg[l]["active"] else " (closed)")
+             for l in logins if cfg[l]["nickname"] + ("" if cfg[l]["active"] else " (closed)") in set(bd["acct"])]
+    bd["month"] = bd["time"].dt.to_period("M")
+
+    def money_table(pivot, label_fmt, head):
+        cols = [c for c in order if c in pivot.columns]
+        body = ""
+        for idx in pivot.index:
+            cells = ""
+            for c in cols:
+                v = pivot.loc[idx, c]
+                if v != v or v == 0:
+                    cells += "<td style='color:#3A465C'>—</td>"
+                else:
+                    cells += f"<td style='color:{GREEN if v >= 0 else RED}'>{v:+,.2f}</td>"
+            tot = pivot.loc[idx, cols].sum()
+            body += (f"<tr><td>{label_fmt(idx)}</td>{cells}"
+                     f"<td class='ytd' style='color:{GREEN if tot >= 0 else RED}'>{tot:+,.2f}</td></tr>")
+        # totals row
+        cells = ""
+        for c in cols:
+            v = pivot[c].sum()
+            cells += f"<td style='color:{GREEN if v >= 0 else RED}'>{v:+,.2f}</td>"
+        grand = pivot[cols].sum().sum()
+        body += (f"<tr><td><b>Total</b></td>{cells}"
+                 f"<td class='ytd' style='color:{GREEN if grand >= 0 else RED}'>{grand:+,.2f}</td></tr>")
+        heads = "".join(f"<th>{c}</th>" for c in cols)
+        st.markdown(f"<div class='kw-mret'><table><thead><tr><th>{head}</th>{heads}<th>All accounts</th>"
+                    f"</tr></thead><tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+
+    wk_piv = bd.pivot_table(index="week", columns="acct", values="net", aggfunc="sum").sort_index(ascending=False).head(12)
+    money_table(wk_piv, lambda w: f"Week of {w:%b %d}", "Week")
+    st.markdown("<div class='kw-note'>Gross profit per account, last 12 weeks. Weeks run Sunday evening "
+                "through Friday; the current week is still filling.</div>", unsafe_allow_html=True)
+
+    mo_piv = bd.pivot_table(index="month", columns="acct", values="net", aggfunc="sum").sort_index(ascending=False)
+    money_table(mo_piv, lambda m: m.strftime("%B %Y"), "Month")
+    st.markdown(f"<div class='kw-note'>Gross profit per account by month, since {stats_from:%b %d, %Y}. "
+                f"Closed accounts keep their history here.</div>", unsafe_allow_html=True)
+
 # ---------------------------------------------------------------- friday summary
 section("Friday summary")
 inc_arch = st.checkbox("Include archived accounts that traded this week",
