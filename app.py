@@ -680,7 +680,9 @@ for l in live:
     today_pl = t.loc[t["date"] == today, "net"].sum()
     seed_total = c_["seed"]
     repaid = seed_total - seed_left[l]
+    mtd = t.loc[t["date"] >= today.replace(day=1), "net"].sum()
     parts = [("Balance", money(bal), ""), (f"Above {c_['base'] / 1000:.0f}k", f"{above:+,.2f}", sgn(above)),
+             ("Month to date", f"{mtd:+,.2f}", sgn(mtd)),
              ("This week", f"{wk_gross:+,.2f}", sgn(wk_gross)), ("Today", f"{today_pl:+,.2f}", sgn(today_pl))]
     ml = float(snap.get("margin_level") or 0)
     if ml and ml == ml:   # skip 0 and NaN (no open positions / not reported)
