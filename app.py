@@ -10,9 +10,13 @@ import streamlit as st
 from supabase import create_client
 
 LOGO_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/logo.png?v=3"
-ICON_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/apple-icon.png?v=3"
+import os as _os
 
-st.set_page_config(page_title="Kona Wolf Trading", page_icon=ICON_URL, layout="wide")
+ICON_URL = "https://raw.githubusercontent.com/jtudor7788/mt5-dashboard/main/apple-icon.png?v=4"
+# Streamlit renders a local file most reliably; fall back to the hosted copy.
+ICON_SRC = "apple-icon.png" if _os.path.exists("apple-icon.png") else ICON_URL
+
+st.set_page_config(page_title="Kona Wolf Trading", page_icon=ICON_SRC, layout="wide")
 
 DAY_TZ = "America/New_York"
 STALE_MINUTES = 20
@@ -141,16 +145,26 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
 """, unsafe_allow_html=True)
 
 import streamlit.components.v1 as _components
+
+# Streamlit re-applies its own favicon on rerun/reconnect, so keep re-asserting ours.
 _components.html(f"""<script>
-try {{
-  const d = (window.top || window.parent).document;
-  d.querySelectorAll("link[rel='apple-touch-icon'], link[rel='icon']").forEach(function(l) {{ l.remove(); }});
-  ["apple-touch-icon", "apple-touch-icon-precomposed", "icon"].forEach(function(r) {{
-    const l = d.createElement("link");
-    l.rel = r; l.sizes = "512x512"; l.href = "{ICON_URL}";
-    d.head.appendChild(l);
-  }});
-}} catch (e) {{}}
+function kwIcon() {{
+  try {{
+    const d = (window.top || window.parent).document;
+    const want = "{ICON_URL}";
+    const cur = d.querySelector("link[rel~='icon']");
+    if (cur && cur.href === want) return;
+    d.querySelectorAll("link[rel~='icon'], link[rel='apple-touch-icon'], link[rel='apple-touch-icon-precomposed'], link[rel='shortcut icon']")
+      .forEach(function(l) {{ l.remove(); }});
+    ["icon", "shortcut icon", "apple-touch-icon", "apple-touch-icon-precomposed"].forEach(function(r) {{
+      const l = d.createElement("link");
+      l.rel = r; l.type = "image/png"; l.sizes = "512x512"; l.href = want;
+      d.head.appendChild(l);
+    }});
+  }} catch (e) {{}}
+}}
+kwIcon();
+setInterval(kwIcon, 2000);
 </script>""", height=0)
 
 sb = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
