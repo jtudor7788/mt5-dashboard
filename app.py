@@ -1111,11 +1111,48 @@ with tab_open:
         st.dataframe(p_[["account", "ticket", "time", "type", "symbol", "volume", "price_open", "price_current", "sl", "tp", "profit"]],
                      use_container_width=True, hide_index=True)
 with tab_closed:
-    show = tsel.sort_values("time", ascending=False).copy()
-    show["account"] = show["login"].map(lambda l: cfg[l]["nickname"])
-    show["time"] = show["time"].dt.strftime("%Y-%m-%d %H:%M")
-    st.dataframe(show[["account", "ticket", "time", "symbol", "volume", "price", "commission", "swap", "profit", "net"]].head(500),
+    # A single round-trip trade can close as more than one MT5 deal (partial
+    # fills), each carrying only its own slice of volume and P&L. Shown raw,
+    # a 2.0-lot trade closed in two 1.0-lot chunks reads as two separate
+    # 1.0-lot rows with the wrong P&L each — group by position_id so every
+    # fill that belongs to the same position becomes one row, summed.
+    cg = tsel.copy()
+    cg["account"] = cg["login"].map(lambda l: cfg[l]["nickname"])
+    has_pos_id = "position_id" in cg.columns and cg["position_id"].notna().any()
+    if has_pos_id:
+        cg["position_id"] = cg["position_id"].fillna(cg["ticket"])
+
+        def _agg_position(grp):
+            vol = grp["volume"].sum()
+            wprice = (grp["price"] * grp["volume"]).sum() / vol if vol else grp["price"].mean()
+            tickets = grp.sort_values("time")["ticket"].tolist()
+            return pd.Series({
+                "account": grp["account"].iloc[0],
+                "symbol": grp["symbol"].iloc[0],
+                "time": grp["time"].max(),
+                "ticket": str(tickets[0]) if len(tickets) == 1 else f"{tickets[0]} +{len(tickets) - 1}",
+                "volume": vol,
+                "price": wprice,
+                "commission": grp["commission"].sum(),
+                "swap": grp["swap"].sum(),
+                "profit": grp["profit"].sum(),
+                "net": grp["net"].sum(),
+                "fills": len(grp),
+            })
+
+        show = (cg.groupby(["login", "position_id"], group_keys=False)
+                  .apply(_agg_position)
+                  .reset_index(drop=True)
+                  .sort_values("time", ascending=False))
+    else:
+        show = cg.sort_values("time", ascending=False).copy()
+        show["fills"] = 1
+    show["time"] = pd.to_datetime(show["time"]).dt.strftime("%Y-%m-%d %H:%M")
+    st.dataframe(show[["account", "ticket", "time", "symbol", "volume", "price", "commission", "swap", "profit", "net", "fills"]].head(500),
                  use_container_width=True, hide_index=True)
+    if has_pos_id:
+        st.markdown("<div class='kw-note'>A trade closed in more than one MT5 deal (partial fills) is combined into a single row here — "
+                    "'fills' shows how many deals made it up, and volume/P&L are summed across all of them.</div>", unsafe_allow_html=True)
 
 st.markdown(f"<div style='border-top:1px solid {LINE};margin-top:36px;padding-top:14px;color:{MUTED};font-size:11px;letter-spacing:0.08em'>"
             f"KONA WOLF TRADING · internal use only · data via MT5 #{', #'.join(str(l) for l in live)} · synced {last_sync} ET</div>",
