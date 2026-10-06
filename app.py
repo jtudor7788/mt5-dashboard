@@ -1071,6 +1071,20 @@ for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
                       f"<div class='p'>{val / base_for_pct * 100:+.2f}%</div></div>")
 st.markdown(f"<div class='kw-cal'>{tiles}</div>", unsafe_allow_html=True)
 
+# clickable day numbers under the calendar — tap one to open every trade taken
+# that day across every account (not just the one selected above)
+st.markdown("<div class='kw-note' style='margin:4px 0 2px'>Tap a day below to open it — all accounts, every trade.</div>", unsafe_allow_html=True)
+for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
+    wk_cols = st.columns(7)
+    for i, day in enumerate(week):
+        if day == 0:
+            continue
+        d_ = date(year, month, day)
+        any_traded = d_ in stats_trades["date"].values
+        if wk_cols[i].button(str(day), key=f"calday_{d_.isoformat()}", use_container_width=True, disabled=not any_traded):
+            st.session_state["day_dialog_date"] = d_
+            st.rerun()
+
 # highlights for the selected month
 if not month_daily.empty:
     best_day_d = month_daily.idxmax()
