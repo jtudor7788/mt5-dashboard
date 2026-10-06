@@ -1,5 +1,6 @@
 import calendar
 import math
+import re
 import time
 from datetime import date, datetime, timedelta
 
@@ -122,6 +123,11 @@ div[data-testid="stSidebar"] {{ background:{CARD}; border-right:1px solid {LINE}
   background:{CARD}; border:1px solid {LINE}; color:{ACCENT}; display:flex; align-items:center; justify-content:center;
   font-size:22px; text-decoration:none; box-shadow:0 4px 14px rgba(0,0,0,0.45); }}
 .kw-refresh:active {{ transform:scale(0.94); }}
+.kw-nav {{ position:sticky; top:0; z-index:40; background:{CARD2}; border:1px solid {LINE}; border-radius:10px;
+           padding:8px 10px; margin-bottom:18px; display:flex; gap:6px; overflow-x:auto; white-space:nowrap; }}
+.kw-nav a {{ color:{MUTED}; font-size:12px; text-decoration:none; padding:6px 10px; border-radius:7px;
+             border:1px solid transparent; white-space:nowrap; flex:none; }}
+.kw-nav a:hover {{ color:{TEXT}; background:{CARD}; border-color:{LINE}; }}
 
 @media (max-width: 700px) {{
   .block-container {{ padding-left:0.8rem; padding-right:0.8rem; padding-top:0.9rem; }}
@@ -467,8 +473,11 @@ def cards(items):
     st.markdown(f"<div class='kw-grid'>{html}</div>", unsafe_allow_html=True)
 
 
-def section(title):
-    st.markdown(f"<div class='kw-section'>{title}</div>", unsafe_allow_html=True)
+def section(title, anchor=None):
+    aid = anchor or re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    # the negative-offset spacer lets the jump land below the sticky nav bar instead of hidden under it
+    st.markdown(f"<div id='{aid}' style='position:relative; top:-66px;'></div><div class='kw-section'>{title}</div>",
+               unsafe_allow_html=True)
 
 
 def chart_layout(fig, height, legend=False):
@@ -552,12 +561,16 @@ def aggregate_positions(df):
     has_pos_id = "position_id" in cg.columns and cg["position_id"].notna().any()
     cg["position_id"] = cg["position_id"].fillna(cg["ticket"]) if has_pos_id else cg["ticket"]
 
-    def _agg(grp):
+    # Iterate groups directly rather than groupby(...).apply(...): newer pandas
+    # (3.0+) excludes the grouping columns from the sub-frame apply() hands to
+    # the function by default, which breaks grp["login"]/grp["position_id"].
+    # Direct iteration always includes every column, so it's version-proof.
+    rows = []
+    for (login0, pid0), grp in cg.groupby(["login", "position_id"], sort=False):
         vol = grp["volume"].sum()
         wprice = (grp["price"] * grp["volume"]).sum() / vol if vol else grp["price"].mean()
         tix = grp.sort_values("time")["ticket"].tolist()
-        login0, pid0 = grp["login"].iloc[0], grp["position_id"].iloc[0]
-        return pd.Series({
+        rows.append({
             "login": login0, "account": grp["account"].iloc[0], "symbol": grp["symbol"].iloc[0],
             "time": grp["time"].max(),
             "ticket": str(tix[0]) if len(tix) == 1 else f"{tix[0]} +{len(tix) - 1}",
@@ -565,9 +578,7 @@ def aggregate_positions(df):
             "profit": grp["profit"].sum(), "net": grp["net"].sum(), "fills": len(grp),
             "trade_key": trade_key(login0, pid0, tix[0]),
         })
-
-    return (cg.groupby(["login", "position_id"], group_keys=False).apply(_agg)
-              .reset_index(drop=True).sort_values("time", ascending=False))
+    return pd.DataFrame(rows).sort_values("time", ascending=False) if rows else df.assign(trade_key=pd.Series(dtype=str))
 
 
 # ---------------------------------------------------------------- sidebar
@@ -647,6 +658,14 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+NAV = [("Totals", "totals-to-date"), ("Accounts", "accounts"), ("Performance", "performance"),
+       ("By account", "weekly-monthly-by-account"), ("Friday summary", "friday-summary"),
+       ("Payouts", "weekly-payouts"), ("Payout history", "payout-history"), ("Seed", "seed-repayment"),
+       ("Expenses", "expenses"), ("Calendar", "calendar"), ("Journal", "journal"),
+       ("Risk & edge", "risk-edge"), ("Best times", "when-you-trade-best"), ("Trades", "trades")]
+nav_html = "".join(f"<a href='#{a}'>{l}</a>" for l, a in NAV)
+st.markdown(f"<div class='kw-nav'>{nav_html}</div>", unsafe_allow_html=True)
+
 if not fresh:
     st.markdown(f"<div class='kw-alert'>⚠ Data is {age_min:.0f} minutes old. The VPS collector hasn't synced since {last_sync} ET — check that MT5 is logged in and the scheduled task is running.</div>",
                 unsafe_allow_html=True)
@@ -715,7 +734,7 @@ ben_seed_repaid = sum(p["seed"].sum() for l, p in payouts.items()
                       if cfg[l]["seed_holder"] == "Ben" and cfg[l]["seed"] > 0 and not p.empty)
 prior_kolby = sum(cfg[l]["prior_kolby"] for l in logins)
 if not tracked.empty or prior_ben or prior_jesse or prior_seed:
-    section("Totals to date")
+    section("Totals to date", anchor="totals-to-date")
     tb = (tracked["ben"] + tracked["expenses"]).sum() if not tracked.empty else 0
     tj = tracked["jesse"].sum() if not tracked.empty else 0
     ts_ = tracked["seed"].sum() if not tracked.empty else 0
@@ -958,7 +977,7 @@ if not allp.empty:
 # ---------------------------------------------------------------- seed tracker
 seeded = [l for l in live if cfg[l]["seed"] > 0 and seed_left[l] > 0]
 if seeded:
-    section("Seed repayment")
+    section("Seed repayment", anchor="seed-repayment")
     items = []
     for l in seeded:
         c_ = cfg[l]
@@ -1189,7 +1208,7 @@ with st.expander("Playbooks · setups & mistakes"):
                     st.rerun()
 
 # ---------------------------------------------------------------- risk & edge
-section(f"Risk & edge · {sel} · since {stats_from:%b %Y}")
+section(f"Risk & edge · {sel} · since {stats_from:%b %Y}", anchor="risk-edge")
 wins = tsel[tsel["net"] > 0]
 losses = tsel[tsel["net"] < 0]
 n = len(tsel)
@@ -1239,7 +1258,7 @@ cards([("Worst day", money(worst_day), sgn(worst_day)),
 
 # ---------------------------------------------------------------- trades
 # ---------------------------------------------------------------- when you trade best
-section(f"When you trade best · {sel}")
+section(f"When you trade best · {sel}", anchor="when-you-trade-best")
 if tsel.empty:
     st.caption("No trades in this window.")
 else:
@@ -1290,7 +1309,7 @@ else:
                      column_config={"Net P&L": st.column_config.NumberColumn(format="dollar"),
                                     "Win %": st.column_config.NumberColumn(format="%.0f%%")})
 
-section(f"Trades · {sel}")
+section(f"Trades · {sel}", anchor="trades")
 tab_open, tab_closed = st.tabs(["Open", "Closed"])
 with tab_open:
     p_ = pos if sel_login is None else pos[pos["login"] == sel_login] if not pos.empty else pos
