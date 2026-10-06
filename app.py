@@ -241,10 +241,12 @@ def load(token):
     deals = pd.DataFrame(rows)
     snaps = pd.DataFrame(sb.table("snapshots").select("*").order("time", desc=True).limit(300).execute().data)
     pos = pd.DataFrame(sb.table("positions").select("*").execute().data)
-    return acct, settings, expenses, ledger, deals, snaps, pos
+    tags = pd.DataFrame(sb.table("trade_tags").select("*").execute().data)
+    playbook = pd.DataFrame(sb.table("playbook_items").select("*").order("kind").order("sort_order").execute().data)
+    return acct, settings, expenses, ledger, deals, snaps, pos, tags, playbook
 
 
-acct, settings, expenses, ledger, deals, snaps, pos = load(TOKEN)
+acct, settings, expenses, ledger, deals, snaps, pos, tags, playbook = load(TOKEN)
 if deals.empty:
     st.warning("No trades yet. Check that the collector is running on the VPS.")
     st.stop()
@@ -512,6 +514,60 @@ def summary_text(wk):
                      f"Jesse ${rows['jesse'].sum():,.2f} / Kolby ${rows['kolby'].sum():,.2f} / "
                      f"Seed ${rows['seed'].sum():,.2f} / Withdraw ${rows['expected_withdrawal'].sum():,.2f}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- journal helpers
+def trade_key(login, position_id, ticket):
+    pid = position_id if position_id == position_id and position_id else ticket
+    return f"{int(login)}:{int(pid)}"
+
+
+tags_by_key = {r["trade_key"]: r for _, r in tags.iterrows()} if not tags.empty else {}
+SETUPS = playbook[(playbook["kind"] == "setup") & (~playbook["archived"])].sort_values("sort_order") if not playbook.empty else pd.DataFrame(columns=["name", "checklist"])
+MISTAKES = playbook[(playbook["kind"] == "mistake") & (~playbook["archived"])].sort_values("sort_order") if not playbook.empty else pd.DataFrame(columns=["name", "checklist"])
+
+
+def save_tag(key, login, **fields):
+    payload = {"trade_key": key, "login": int(login), "updated_at": datetime.utcnow().isoformat()}
+    payload.update(fields)
+    sb.table("trade_tags").upsert(payload, on_conflict="trade_key").execute()
+
+
+def add_playbook_item(kind, name, checklist=None):
+    existing = playbook[playbook["kind"] == kind] if not playbook.empty else pd.DataFrame()
+    nxt = int(existing["sort_order"].max()) + 1 if not existing.empty else 1
+    sb.table("playbook_items").insert({"kind": kind, "name": name, "checklist": checklist or [], "sort_order": nxt}).execute()
+
+
+def archive_playbook_item(item_id):
+    sb.table("playbook_items").update({"archived": True}).eq("id", int(item_id)).execute()
+
+
+def aggregate_positions(df):
+    """Collapse MT5 deals into one row per closed position (partial fills merged), with a stable trade_key for tagging."""
+    if df.empty:
+        return df.assign(trade_key=pd.Series(dtype=str))
+    cg = df.copy()
+    cg["account"] = cg["login"].map(lambda l: cfg[l]["nickname"])
+    has_pos_id = "position_id" in cg.columns and cg["position_id"].notna().any()
+    cg["position_id"] = cg["position_id"].fillna(cg["ticket"]) if has_pos_id else cg["ticket"]
+
+    def _agg(grp):
+        vol = grp["volume"].sum()
+        wprice = (grp["price"] * grp["volume"]).sum() / vol if vol else grp["price"].mean()
+        tix = grp.sort_values("time")["ticket"].tolist()
+        login0, pid0 = grp["login"].iloc[0], grp["position_id"].iloc[0]
+        return pd.Series({
+            "login": login0, "account": grp["account"].iloc[0], "symbol": grp["symbol"].iloc[0],
+            "time": grp["time"].max(),
+            "ticket": str(tix[0]) if len(tix) == 1 else f"{tix[0]} +{len(tix) - 1}",
+            "volume": vol, "price": wprice, "commission": grp["commission"].sum(), "swap": grp["swap"].sum(),
+            "profit": grp["profit"].sum(), "net": grp["net"].sum(), "fills": len(grp),
+            "trade_key": trade_key(login0, pid0, tix[0]),
+        })
+
+    return (cg.groupby(["login", "position_id"], group_keys=False).apply(_agg)
+              .reset_index(drop=True).sort_values("time", ascending=False))
 
 
 # ---------------------------------------------------------------- sidebar
@@ -996,6 +1052,142 @@ for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
                       f"<div class='p'>{val / base_for_pct * 100:+.2f}%</div></div>")
 st.markdown(f"<div class='kw-cal'>{tiles}</div>", unsafe_allow_html=True)
 
+# highlights for the selected month
+if not month_daily.empty:
+    best_day_d = month_daily.idxmax()
+    worst_day_d = month_daily.idxmin()
+    cards([("Biggest win this month", money(month_daily.max()), "pos"),
+           ("Biggest loss this month", money(month_daily.min()), "neg" if month_daily.min() < 0 else ""),
+           (f"Best day · {best_day_d:%b %d}", money(month_daily[best_day_d]), sgn(month_daily[best_day_d])),
+           (f"Worst day · {worst_day_d:%b %d}", money(month_daily[worst_day_d]), sgn(month_daily[worst_day_d]))])
+
+# ---------------------------------------------------------------- journal: tagging & playbooks
+section("Journal")
+
+month_trades = stats_trades[stats_trades["date"] >= today.replace(day=1)] if sel_login is None else stats_trades[(stats_trades["login"] == sel_login) & (stats_trades["date"] >= today.replace(day=1))]
+month_positions = aggregate_positions(month_trades)
+n_untagged = int((~month_positions["trade_key"].map(lambda k: bool(tags_by_key.get(k, {}).get("reviewed")))).sum()) if not month_positions.empty else 0
+if n_untagged:
+    first_untagged_day = month_positions[~month_positions["trade_key"].map(lambda k: bool(tags_by_key.get(k, {}).get("reviewed")))]["time"].min()
+    st.markdown(f"<div class='kw-alert' style='background:#2A2410;border-color:#5A4A1A;color:#E8C96B'>"
+                f"{n_untagged} trade{'s' if n_untagged != 1 else ''} this month still need{'s' if n_untagged == 1 else ''} a tag.</div>",
+                unsafe_allow_html=True)
+    if st.button(f"Review {n_untagged} untagged on {first_untagged_day:%b %d}"):
+        st.session_state["day_dialog_date"] = first_untagged_day.date()
+        st.session_state["day_dialog_login"] = sel_login
+        st.rerun()
+
+# -- day drill-down: pick a day that traded, tag trades inline
+days_with_trades = sorted(tsel["date"].unique(), reverse=True)
+if days_with_trades:
+    dpick_col, dbtn_col = st.columns([3, 1])
+    default_day = st.session_state.get("day_dialog_date") if st.session_state.get("day_dialog_date") in days_with_trades else days_with_trades[0]
+    dpick = dpick_col.selectbox("Day to review", days_with_trades, index=days_with_trades.index(default_day),
+                                format_func=lambda d: d.strftime("%A, %B %d, %Y"), label_visibility="collapsed")
+    if dbtn_col.button("Open day", use_container_width=True):
+        st.session_state["day_dialog_date"] = dpick
+        st.session_state["day_dialog_login"] = sel_login
+        st.rerun()
+
+if st.session_state.get("day_dialog_date"):
+
+    @st.dialog(f"{st.session_state['day_dialog_date']:%A, %B %d, %Y}", width="large")
+    def day_dialog():
+        d = st.session_state["day_dialog_date"]
+        lg = st.session_state.get("day_dialog_login")
+        day_trades = stats_trades[stats_trades["date"] == d]
+        if lg is not None:
+            day_trades = day_trades[day_trades["login"] == lg]
+        rows = aggregate_positions(day_trades).sort_values("time")
+        net = rows["net"].sum() if not rows.empty else 0
+        wins_ = int((rows["net"] > 0).sum()) if not rows.empty else 0
+        losses_ = int((rows["net"] < 0).sum()) if not rows.empty else 0
+        st.markdown(f"<div class='kw-note'>{len(rows)} trades · {wins_}W {losses_}L · net "
+                    f"<span style='color:{GREEN if net >= 0 else RED}'>{money(net)}</span></div>", unsafe_allow_html=True)
+        note_key = f"daynote_{d.isoformat()}_{lg}"
+        for _, row in rows.iterrows():
+            key = row["trade_key"]
+            existing = tags_by_key.get(key, {})
+            c1, c2, c3 = st.columns([3, 1.6, 1.2])
+            c1.markdown(f"**{row['symbol']}** {row['volume']:.2f} lots · {row['time']:%H:%M}" +
+                       (f" · *{existing.get('setup')}*" if existing.get("setup") else ""))
+            c2.markdown(f"<span style='color:{GREEN if row['net'] >= 0 else RED}'>{money(row['net'])}</span>", unsafe_allow_html=True)
+            label = "✓ Tagged" if existing.get("reviewed") else "Tag"
+            if c3.button(label, key=f"tagbtn_{key}", use_container_width=True):
+                st.session_state["reviewing_key"] = None if st.session_state.get("reviewing_key") == key else key
+                st.rerun()
+            if st.session_state.get("reviewing_key") == key:
+                with st.container(border=True):
+                    setup_opts = SETUPS["name"].tolist()
+                    setup_choice = st.pills("Setup", setup_opts, default=existing.get("setup") if existing.get("setup") in setup_opts else None,
+                                            key=f"setup_{key}")
+                    mistake_opts = MISTAKES["name"].tolist()
+                    mistake_default = [m for m in (existing.get("mistakes") or []) if m in mistake_opts]
+                    mistake_choice = st.pills("Mistakes", mistake_opts, selection_mode="multi", default=mistake_default, key=f"mist_{key}")
+                    followed = st.radio("Did you follow your plan?", ["Followed it", "Broke it"], horizontal=True,
+                                        index=0 if existing.get("followed_plan", True) else 1, key=f"fp_{key}")
+                    note = st.text_area("Note", value=existing.get("note") or "", key=f"note_{key}",
+                                        placeholder="What happened, and what would you do differently?")
+                    b1, b2 = st.columns(2)
+                    if b1.button("Save & close", key=f"save_{key}", use_container_width=True, type="primary"):
+                        save_tag(key, row["login"], setup=setup_choice, mistakes=mistake_choice,
+                                 followed_plan=(followed == "Followed it"), note=note or None, reviewed=True)
+                        st.session_state["reviewing_key"] = None
+                        st.cache_data.clear()
+                        st.rerun()
+                    remaining = [r2["trade_key"] for _, r2 in rows.iterrows()
+                                if not tags_by_key.get(r2["trade_key"], {}).get("reviewed") and r2["trade_key"] != key]
+                    if b2.button("Save & next" if remaining else "Save", key=f"savenext_{key}", use_container_width=True):
+                        save_tag(key, row["login"], setup=setup_choice, mistakes=mistake_choice,
+                                 followed_plan=(followed == "Followed it"), note=note or None, reviewed=True)
+                        st.session_state["reviewing_key"] = remaining[0] if remaining else None
+                        st.cache_data.clear()
+                        st.rerun()
+        if st.button("Close day", use_container_width=True):
+            st.session_state["day_dialog_date"] = None
+            st.session_state["reviewing_key"] = None
+            st.rerun()
+
+    day_dialog()
+
+# -- playbooks: your setup & mistake library, with stats once a setup has trades tagged
+with st.expander("Playbooks · setups & mistakes"):
+    tagged = tags[tags["reviewed"] == True] if not tags.empty else pd.DataFrame()
+    net_by_key = {}
+    if not tagged.empty:
+        all_pos = aggregate_positions(stats_trades)
+        net_by_key = dict(zip(all_pos["trade_key"], all_pos["net"])) if not all_pos.empty else {}
+    pb_cols = st.columns(2)
+    for kind, col, label in [("setup", pb_cols[0], "Setups"), ("mistake", pb_cols[1], "Mistakes")]:
+        with col:
+            st.markdown(f"**{label}**")
+            items = playbook[(playbook["kind"] == kind) & (~playbook["archived"])].sort_values("sort_order") if not playbook.empty else pd.DataFrame()
+            for _, it in items.iterrows():
+                if kind == "setup":
+                    matched = tagged[tagged["setup"] == it["name"]] if not tagged.empty else pd.DataFrame()
+                else:
+                    matched = tagged[tagged["mistakes"].apply(lambda m: it["name"] in (m or []))] if not tagged.empty else pd.DataFrame()
+                cnt = len(matched)
+                if cnt >= 10:
+                    pnl = sum(net_by_key.get(k, 0) for k in matched["trade_key"])
+                    wins_ = sum(1 for k in matched["trade_key"] if net_by_key.get(k, 0) > 0)
+                    stat = f"{cnt} trades · {wins_ / cnt * 100:.0f}% win · {money(pnl)}"
+                else:
+                    stat = f"{cnt} tagged · needs {10 - cnt} more to rate" if cnt else "not tagged yet"
+                rc1, rc2 = st.columns([4, 1])
+                rc1.markdown(f"<div style='font-size:13px'><b>{it['name']}</b><br><span class='kw-note' style='margin:0'>{stat}</span></div>",
+                            unsafe_allow_html=True)
+                if rc2.button("Archive", key=f"arch_{kind}_{it['id']}"):
+                    archive_playbook_item(it["id"])
+                    st.cache_data.clear()
+                    st.rerun()
+            with st.form(f"add_{kind}", clear_on_submit=True):
+                nm = st.text_input(f"New {kind}", label_visibility="collapsed", placeholder=f"Add a {kind}…")
+                if st.form_submit_button(f"+ Add {kind}", use_container_width=True) and nm:
+                    add_playbook_item(kind, nm)
+                    st.cache_data.clear()
+                    st.rerun()
+
 # ---------------------------------------------------------------- risk & edge
 section(f"Risk & edge · {sel} · since {stats_from:%b %Y}")
 wins = tsel[tsel["net"] > 0]
@@ -1112,47 +1304,23 @@ with tab_open:
                      use_container_width=True, hide_index=True)
 with tab_closed:
     # A single round-trip trade can close as more than one MT5 deal (partial
-    # fills), each carrying only its own slice of volume and P&L. Shown raw,
-    # a 2.0-lot trade closed in two 1.0-lot chunks reads as two separate
-    # 1.0-lot rows with the wrong P&L each — group by position_id so every
-    # fill that belongs to the same position becomes one row, summed.
-    cg = tsel.copy()
-    cg["account"] = cg["login"].map(lambda l: cfg[l]["nickname"])
-    has_pos_id = "position_id" in cg.columns and cg["position_id"].notna().any()
-    if has_pos_id:
-        cg["position_id"] = cg["position_id"].fillna(cg["ticket"])
-
-        def _agg_position(grp):
-            vol = grp["volume"].sum()
-            wprice = (grp["price"] * grp["volume"]).sum() / vol if vol else grp["price"].mean()
-            tickets = grp.sort_values("time")["ticket"].tolist()
-            return pd.Series({
-                "account": grp["account"].iloc[0],
-                "symbol": grp["symbol"].iloc[0],
-                "time": grp["time"].max(),
-                "ticket": str(tickets[0]) if len(tickets) == 1 else f"{tickets[0]} +{len(tickets) - 1}",
-                "volume": vol,
-                "price": wprice,
-                "commission": grp["commission"].sum(),
-                "swap": grp["swap"].sum(),
-                "profit": grp["profit"].sum(),
-                "net": grp["net"].sum(),
-                "fills": len(grp),
-            })
-
-        show = (cg.groupby(["login", "position_id"], group_keys=False)
-                  .apply(_agg_position)
-                  .reset_index(drop=True)
-                  .sort_values("time", ascending=False))
+    # fills), each carrying only its own slice of volume and P&L. Grouping by
+    # position_id turns every fill belonging to one position into one row.
+    show = aggregate_positions(tsel)
+    if show.empty:
+        st.caption("No closed trades in this window.")
     else:
-        show = cg.sort_values("time", ascending=False).copy()
-        show["fills"] = 1
-    show["time"] = pd.to_datetime(show["time"]).dt.strftime("%Y-%m-%d %H:%M")
-    st.dataframe(show[["account", "ticket", "time", "symbol", "volume", "price", "commission", "swap", "profit", "net", "fills"]].head(500),
-                 use_container_width=True, hide_index=True)
-    if has_pos_id:
+        show["Review"] = show["trade_key"].map(lambda k: "Reviewed" if tags_by_key.get(k, {}).get("reviewed") else "Needs review")
+        rev_filter = st.radio("Review status", ["Any", "Needs review", "Reviewed"], horizontal=True,
+                              key="closed_review_filter", label_visibility="collapsed")
+        disp = show if rev_filter == "Any" else show[show["Review"] == rev_filter]
+        disp = disp.copy()
+        disp["time"] = pd.to_datetime(disp["time"]).dt.strftime("%Y-%m-%d %H:%M")
+        st.dataframe(disp[["account", "ticket", "time", "symbol", "volume", "price", "commission", "swap", "profit", "net", "fills", "Review"]].head(500),
+                     use_container_width=True, hide_index=True)
         st.markdown("<div class='kw-note'>A trade closed in more than one MT5 deal (partial fills) is combined into a single row here — "
-                    "'fills' shows how many deals made it up, and volume/P&L are summed across all of them.</div>", unsafe_allow_html=True)
+                    "'fills' shows how many deals made it up, and volume/P&L are summed across all of them. Tag trades from the "
+                    "Journal section above to mark them reviewed.</div>", unsafe_allow_html=True)
 
 st.markdown(f"<div style='border-top:1px solid {LINE};margin-top:36px;padding-top:14px;color:{MUTED};font-size:11px;letter-spacing:0.08em'>"
             f"KONA WOLF TRADING · internal use only · data via MT5 #{', #'.join(str(l) for l in live)} · synced {last_sync} ET</div>",
