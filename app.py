@@ -717,18 +717,43 @@ copy_accts = [l for l in live if not cfg[l]["is_master"]]
 if copy_accts:
     section("Copy accuracy", anchor="copy-accuracy")
     week_main = trades[(trades["login"] == master) & (trades["date"] >= this_week)]["net"].sum()
+    main_today_trades = trades[(trades["login"] == master) & (trades["date"] == today)]
+    main_week_trades = trades[(trades["login"] == master) & (trades["date"] >= this_week)]
+    main_vol_today = main_today_trades["volume"].sum()
+    main_vol_week = main_week_trades["volume"].sum()
+    main_pl_today = main_today / main_vol_today if main_vol_today else 0
+    main_pl_week = week_main / main_vol_week if main_vol_week else 0
+
     copy_items = []
+    perlot_items = [("Main $/lot · today", f"{main_pl_today:+,.2f}", sgn(main_pl_today)),
+                    ("Main $/lot · this week", f"{main_pl_week:+,.2f}", sgn(main_pl_week))]
     for l in copy_accts:
-        today_l = trades[(trades["login"] == l) & (trades["date"] == today)]["net"].sum()
-        week_l = trades[(trades["login"] == l) & (trades["date"] >= this_week)]["net"].sum()
-        diff_today = today_l - main_today
-        diff_week = week_l - week_main
+        today_t = trades[(trades["login"] == l) & (trades["date"] == today)]
+        week_t = trades[(trades["login"] == l) & (trades["date"] >= this_week)]
+        today_l, week_l = today_t["net"].sum(), week_t["net"].sum()
+        diff_today, diff_week = today_l - main_today, week_l - week_main
         copy_items.append((f"{cfg[l]['nickname']} vs Main · today", f"{diff_today:+,.2f}", sgn(diff_today)))
         copy_items.append((f"{cfg[l]['nickname']} vs Main · this week", f"{diff_week:+,.2f}", sgn(diff_week)))
+
+        # normalized per-lot: net P&L ÷ lots traded, so a 1.05-lot fill is compared
+        # fairly against Main's 1.0 lot instead of just looking bigger because it's bigger
+        vol_today, vol_week = today_t["volume"].sum(), week_t["volume"].sum()
+        pl_today = today_l / vol_today if vol_today else 0
+        pl_week = week_l / vol_week if vol_week else 0
+        d_pl_today, d_pl_week = pl_today - main_pl_today, pl_week - main_pl_week
+        perlot_items.append((f"Main $/lot · today", f"{main_pl_today:+,.2f}", sgn(main_pl_today)))
+        perlot_items.append((f"{cfg[l]['nickname']} $/lot · today", f"{pl_today:+,.2f}", sgn(pl_today)))
+        perlot_items.append((f"{cfg[l]['nickname']} $/lot vs Main · today", f"{d_pl_today:+,.2f}", sgn(d_pl_today)))
+        perlot_items.append((f"{cfg[l]['nickname']} $/lot vs Main · this week", f"{d_pl_week:+,.2f}", sgn(d_pl_week)))
     cards(copy_items)
     st.markdown("<div class='kw-note'>Positive means the copy account made more than Main; negative means less — a gap here usually "
-                "means slippage, a missed fill, or a trade that didn't copy. Compares net P&L, same symbol/direction assumed "
-                "(not matched trade-by-trade).</div>", unsafe_allow_html=True)
+                "means slippage, a missed fill, or a trade that didn't copy. Compares total net P&L, so it's partly size — "
+                "the per-lot numbers below strip that out.</div>", unsafe_allow_html=True)
+    cards(perlot_items)
+    st.markdown("<div class='kw-note'>Dollars of net P&L per lot traded (net ÷ total volume) — comparable even when the copy "
+                "account's fill size (e.g. 1.05 lots) doesn't match Main's (1.0 lots) exactly. The vs-Main rows are the gap "
+                "per lot; a persistent negative gap points to execution quality on the copy account (slippage/spread), not size.</div>",
+                unsafe_allow_html=True)
 
 seed_owed = sum(seed_left[l] for l in live)
 seed_total = sum(cfg[l]["seed"] for l in live)
