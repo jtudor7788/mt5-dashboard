@@ -741,8 +741,8 @@ if copy_accts:
         pl_today = today_l / vol_today if vol_today else 0
         pl_week = week_l / vol_week if vol_week else 0
         d_pl_today, d_pl_week = pl_today - main_pl_today, pl_week - main_pl_week
-        perlot_items.append((f"Main $/lot · today", f"{main_pl_today:+,.2f}", sgn(main_pl_today)))
         perlot_items.append((f"{cfg[l]['nickname']} $/lot · today", f"{pl_today:+,.2f}", sgn(pl_today)))
+        perlot_items.append((f"{cfg[l]['nickname']} $/lot · this week", f"{pl_week:+,.2f}", sgn(pl_week)))
         perlot_items.append((f"{cfg[l]['nickname']} $/lot vs Main · today", f"{d_pl_today:+,.2f}", sgn(d_pl_today)))
         perlot_items.append((f"{cfg[l]['nickname']} $/lot vs Main · this week", f"{d_pl_week:+,.2f}", sgn(d_pl_week)))
     cards(copy_items)
