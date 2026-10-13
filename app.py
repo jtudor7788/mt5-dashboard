@@ -658,7 +658,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-NAV = [("Totals", "totals-to-date"), ("Accounts", "accounts"), ("Performance", "performance"),
+NAV = [("Copy accuracy", "copy-accuracy"), ("Totals", "totals-to-date"), ("Accounts", "accounts"), ("Performance", "performance"),
        ("By account", "weekly-monthly-by-account"), ("Friday summary", "friday-summary"),
        ("Payouts", "weekly-payouts"), ("Payout history", "payout-history"), ("Seed", "seed-repayment"),
        ("Expenses", "expenses"), ("Calendar", "calendar"), ("Journal", "journal"),
@@ -711,6 +711,25 @@ cards([(f"Last 15 min · {len(last_15)} trade{'s' if len(last_15) != 1 else ''}"
         money(p15), sgn(p15)),
        (f"Last hour · {len(last_60)} trade{'s' if len(last_60) != 1 else ''}",
         money(p60), sgn(p60), spark60)])
+
+# ---------------------------------------------------------------- copy accuracy
+copy_accts = [l for l in live if not cfg[l]["is_master"]]
+if copy_accts:
+    section("Copy accuracy", anchor="copy-accuracy")
+    week_main = trades[(trades["login"] == master) & (trades["date"] >= this_week)]["net"].sum()
+    copy_items = []
+    for l in copy_accts:
+        today_l = trades[(trades["login"] == l) & (trades["date"] == today)]["net"].sum()
+        week_l = trades[(trades["login"] == l) & (trades["date"] >= this_week)]["net"].sum()
+        diff_today = today_l - main_today
+        diff_week = week_l - week_main
+        copy_items.append((f"{cfg[l]['nickname']} vs Main · today", f"{diff_today:+,.2f}", sgn(diff_today)))
+        copy_items.append((f"{cfg[l]['nickname']} vs Main · this week", f"{diff_week:+,.2f}", sgn(diff_week)))
+    cards(copy_items)
+    st.markdown("<div class='kw-note'>Positive means the copy account made more than Main; negative means less — a gap here usually "
+                "means slippage, a missed fill, or a trade that didn't copy. Compares net P&L, same symbol/direction assumed "
+                "(not matched trade-by-trade).</div>", unsafe_allow_html=True)
+
 seed_owed = sum(seed_left[l] for l in live)
 seed_total = sum(cfg[l]["seed"] for l in live)
 seed_pct = (seed_total - seed_owed) / seed_total * 100 if seed_total else 0
