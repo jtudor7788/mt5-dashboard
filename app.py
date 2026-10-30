@@ -249,10 +249,19 @@ def load(token):
     pos = pd.DataFrame(sb.table("positions").select("*").execute().data)
     tags = pd.DataFrame(sb.table("trade_tags").select("*").execute().data)
     playbook = pd.DataFrame(sb.table("playbook_items").select("*").order("kind").order("sort_order").execute().data)
-    return acct, settings, expenses, ledger, deals, snaps, pos, tags, playbook
+    # these two tables are new — degrade gracefully (empty) until the migration has been run
+    try:
+        moves = pd.DataFrame(sb.table("capital_moves").select("*").order("moved_on", desc=True).execute().data)
+    except Exception:
+        moves = pd.DataFrame()
+    try:
+        plans = pd.DataFrame(sb.table("daily_plans").select("*").execute().data)
+    except Exception:
+        plans = pd.DataFrame()
+    return acct, settings, expenses, ledger, deals, snaps, pos, tags, playbook, moves, plans
 
 
-acct, settings, expenses, ledger, deals, snaps, pos, tags, playbook = load(TOKEN)
+acct, settings, expenses, ledger, deals, snaps, pos, tags, playbook, moves, plans = load(TOKEN)
 if deals.empty:
     st.warning("No trades yet. Check that the collector is running on the VPS.")
     st.stop()
@@ -277,6 +286,15 @@ deals["week"] = deals["date"].map(week_of)
 trades = deals[deals["entry"].isin([1, 3]) & deals["type"].isin([0, 1])].copy()
 cash = deals[deals["type"] == 2].copy()
 withdrawals = cash[cash["net"] < 0]
+
+# open-side deals (entry==0), keyed by login+position_id, so a closed position can look
+# up when it was opened and we can compute hold time (aggregate_positions only groups
+# the closing deals, entry in [1,3]).
+if "position_id" in deals.columns and deals["position_id"].notna().any():
+    _opens = deals[deals["entry"] == 0][["login", "position_id", "time"]].dropna(subset=["position_id"])
+    OPEN_TIME = _opens.groupby(["login", "position_id"])["time"].min().to_dict()
+else:
+    OPEN_TIME = {}
 
 snaps = snaps.drop_duplicates("login") if not snaps.empty else snaps
 latest = {r["login"]: r for _, r in snaps.iterrows()}
@@ -312,6 +330,16 @@ live = [l for l in logins if cfg[l]["active"]] or logins
 archived = [l for l in logins if not cfg[l]["active"]]
 master = next((l for l in live if cfg[l]["is_master"]), live[0])
 BASE_TOTAL = sum(cfg[l]["base"] for l in live)
+
+# capital added/pulled outside of trading P&L (deposits/withdrawals), per account,
+# so "Above base" keeps reflecting trading performance only
+net_moves = {}
+if not moves.empty:
+    moves["moved_on"] = pd.to_datetime(moves["moved_on"]).dt.date
+    moves["amount"] = moves["amount"].astype(float)
+    for l in cfg:
+        m = moves[moves["login"] == l]
+        net_moves[l] = m.loc[m["kind"] == "deposit", "amount"].sum() - m.loc[m["kind"] == "withdrawal", "amount"].sum()
 
 if not expenses.empty:
     expenses["spent_on"] = pd.to_datetime(expenses["spent_on"]).dt.date
@@ -570,9 +598,12 @@ def aggregate_positions(df):
         vol = grp["volume"].sum()
         wprice = (grp["price"] * grp["volume"]).sum() / vol if vol else grp["price"].mean()
         tix = grp.sort_values("time")["ticket"].tolist()
+        close_time = grp["time"].max()
+        open_time = OPEN_TIME.get((login0, pid0))
+        hold_min = (close_time - open_time).total_seconds() / 60 if open_time is not None else float("nan")
         rows.append({
             "login": login0, "account": grp["account"].iloc[0], "symbol": grp["symbol"].iloc[0],
-            "time": grp["time"].max(),
+            "time": close_time, "position_id": pid0, "hold_min": hold_min,
             "ticket": str(tix[0]) if len(tix) == 1 else f"{tix[0]} +{len(tix) - 1}",
             "volume": vol, "price": wprice, "commission": grp["commission"].sum(), "swap": grp["swap"].sum(),
             "profit": grp["profit"].sum(), "net": grp["net"].sum(), "fills": len(grp),
@@ -658,7 +689,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-NAV = [("Copy accuracy", "copy-accuracy"), ("Totals", "totals-to-date"), ("Accounts", "accounts"), ("Performance", "performance"),
+NAV = [("Today's plan", "todays-plan"), ("Recovery", "recovery-growth"), ("Copy accuracy", "copy-accuracy"), ("Totals", "totals-to-date"), ("Accounts", "accounts"), ("Performance", "performance"),
        ("By account", "weekly-monthly-by-account"), ("Friday summary", "friday-summary"),
        ("Payouts", "weekly-payouts"), ("Payout history", "payout-history"), ("Seed", "seed-repayment"),
        ("Expenses", "expenses"), ("Calendar", "calendar"), ("Journal", "journal"),
@@ -669,6 +700,33 @@ st.markdown(f"<div class='kw-nav'>{nav_html}</div>", unsafe_allow_html=True)
 if not fresh:
     st.markdown(f"<div class='kw-alert'>⚠ Data is {age_min:.0f} minutes old. The VPS collector hasn't synced since {last_sync} ET — check that MT5 is logged in and the scheduled task is running.</div>",
                 unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- today's plan
+section("Today's plan", anchor="todays-plan")
+today_plan = plans[plans["plan_date"] == today.isoformat()] if "plan_date" in plans.columns else pd.DataFrame()
+existing_plan = today_plan.iloc[0].to_dict() if not today_plan.empty else {}
+with st.form("daily_plan_form"):
+    pc1, pc2 = st.columns([2, 1])
+    bias_in = pc1.text_input("Bias", value=existing_plan.get("bias") or "",
+                             placeholder="e.g. Long gold above NY open, fade if it loses 4200")
+    max_in = pc2.number_input("Max trades today", min_value=0, step=1, value=int(existing_plan.get("max_trades") or 0))
+    inval_in = st.text_input("Invalidation", value=existing_plan.get("invalidation") or "",
+                             placeholder="What proves the bias wrong?")
+    if st.form_submit_button("Save today's plan", use_container_width=True):
+        try:
+            sb.table("daily_plans").upsert({"plan_date": today.isoformat(), "bias": bias_in or None,
+                                            "max_trades": int(max_in) or None, "invalidation": inval_in or None},
+                                           on_conflict="plan_date").execute()
+            st.cache_data.clear()
+            st.rerun()
+        except Exception:
+            st.error("Couldn't save — run the capital_plan_schema.sql migration in Supabase first.")
+if existing_plan:
+    trades_today_n = len(trades[trades["date"] == today])
+    cap = existing_plan.get("max_trades")
+    over = cap and trades_today_n > cap
+    st.markdown(f"<div class='kw-note'>{trades_today_n} trade{'s' if trades_today_n != 1 else ''} taken today"
+                f"{f' — over your {int(cap)}-trade cap' if over else ''}.</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- header cards: this week
 g = cur["gross"].sum() if not cur.empty else 0
@@ -711,6 +769,50 @@ cards([(f"Last 15 min · {len(last_15)} trade{'s' if len(last_15) != 1 else ''}"
         money(p15), sgn(p15)),
        (f"Last hour · {len(last_60)} trade{'s' if len(last_60) != 1 else ''}",
         money(p60), sgn(p60), spark60)])
+
+# ---------------------------------------------------------------- recovery & growth
+section("Recovery & growth", anchor="recovery-growth")
+rc1, rc2 = st.columns(2)
+
+with rc1:
+    recent_start = today - timedelta(days=1)   # yesterday + today
+    recent = trades[trades["date"] >= recent_start].sort_values("time")
+    if recent.empty:
+        st.markdown(f"<div class='kw-acct'><span class='name'>Recovery tracker</span>"
+                    f"<div class='kw-note' style='margin-top:10px'>No trades yet since {recent_start:%b %d}.</div></div>",
+                    unsafe_allow_html=True)
+    else:
+        cum_recent = recent["net"].cumsum()
+        trough = min(cum_recent.min(), 0.0)
+        current_net = cum_recent.iloc[-1]
+        if current_net >= 0:
+            parts = [("Status", "Recovered ✓", "pos"), ("Net since " + f"{recent_start:%b %d}", f"{current_net:+,.2f}", "pos")]
+            bar = ""
+        else:
+            recovered = current_net - trough
+            to_go = -current_net
+            pct = min(max(recovered / -trough * 100, 0), 100) if trough < 0 else 100
+            parts = [("Still down", money(to_go), "neg"), ("Worst point", money(trough), "neg"),
+                     ("Clawed back", money(recovered), "pos" if recovered > 0 else "")]
+            bar = f"<div class='k' style='margin-top:12px'>{pct:.0f}% recovered from the worst point</div><div class='kw-bar'><div style='width:{pct:.1f}%'></div></div>"
+        html = "".join(f"<div><div class='k'>{k}</div><div class='v {cls}'>{v}</div></div>" for k, v, cls in parts)
+        st.markdown(f"<div class='kw-acct'><span class='name'>Recovery tracker</span><span class='tag'>{recent_start:%b %d}–{today:%b %d}</span>"
+                    f"<div class='row'>{html}</div>{bar}</div>", unsafe_allow_html=True)
+
+with rc2:
+    total_balance = sum(float(latest.get(l, {}).get("balance", 0) or 0) for l in live)
+    to_target = BASE_TOTAL - total_balance
+    pct_there = min(max(total_balance / BASE_TOTAL * 100, 0), 100) if BASE_TOTAL else 0
+    if to_target <= 0:
+        parts = [("Status", "Target hit ✓", "pos"), ("Combined balance", money(total_balance), "pos"),
+                 ("Surplus over target", money(-to_target), "pos")]
+    else:
+        parts = [("Still need", money(to_target), "neg"), ("Combined balance", money(total_balance), ""),
+                 ("Target", money(BASE_TOTAL), "")]
+    html = "".join(f"<div><div class='k'>{k}</div><div class='v {cls}'>{v}</div></div>" for k, v, cls in parts)
+    bar = f"<div class='k' style='margin-top:12px'>{pct_there:.0f}% of the way to ${BASE_TOTAL:,.0f} combined</div><div class='kw-bar'><div style='width:{pct_there:.1f}%'></div></div>"
+    st.markdown(f"<div class='kw-acct'><span class='name'>Growth to target</span><span class='tag'>{len(live)} accounts</span>"
+                f"<div class='row'>{html}</div>{bar}</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- copy accuracy
 copy_accts = [l for l in live if not cfg[l]["is_master"]]
@@ -801,7 +903,7 @@ for l in live:
     c_ = cfg[l]
     snap = latest.get(l, {})
     bal = float(snap.get("balance", 0) or 0)
-    above = bal - c_["base"]
+    above = bal - c_["base"] - net_moves.get(l, 0)
     p = payouts[l]
     wk_gross = p.loc[p["week"] == this_week, "gross"].sum() if ("week" in p.columns and not p.empty) else 0
     t = trades[trades["login"] == l]
@@ -826,6 +928,8 @@ for l in live:
                 parts.append(("Avg drift · last 8 wks", f"{avg_drift:+,.2f}", sgn(avg_drift)))
     if seed_total > 0 and seed_left[l] > 0:
         parts.append((f"Owed to {c_['seed_holder']}", money(seed_left[l]), ""))
+    if net_moves.get(l):
+        parts.append(("Capital in/out", f"{net_moves[l]:+,.2f}", sgn(net_moves[l])))
     html = "".join(f"<div><div class='k'>{k}</div><div class='v {cls}'>{v}</div></div>" for k, v, cls in parts)
     tag = "MASTER" if c_["is_master"] else "COPY"
     bar = ""
@@ -845,6 +949,36 @@ if archived:
     st.markdown(f"<div class='kw-note'>Archived: {' · '.join(bits)}. Closed accounts stay in every all-time "
                 f"figure, the calendar and the trade history; they are no longer collected.</div>",
                 unsafe_allow_html=True)
+
+with st.expander("Add a deposit / withdrawal"):
+    st.markdown("<div class='kw-note'>Log capital moved in or out of an account outside of trading — so "
+                "'Above base' above keeps reflecting trading performance only, not outside cash movements.</div>",
+                unsafe_allow_html=True)
+    with st.form("add_capital_move", clear_on_submit=True):
+        mc1, mc2, mc3, mc4 = st.columns([1.6, 1, 1, 1.2])
+        m_login = mc1.selectbox("Account", live, format_func=lambda l: cfg[l]["nickname"])
+        m_kind = mc2.selectbox("Type", ["Deposit", "Withdrawal"])
+        m_amt = mc3.number_input("Amount ($)", min_value=0.0, step=1.0, format="%.2f")
+        m_date = mc4.date_input("Date", value=today)
+        m_note = st.text_input("Note (optional)")
+        if st.form_submit_button("Add", use_container_width=True):
+            if m_amt > 0:
+                try:
+                    sb.table("capital_moves").insert({"login": int(m_login), "moved_on": m_date.isoformat(),
+                                                       "kind": m_kind.lower(), "amount": m_amt, "note": m_note or None}).execute()
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception:
+                    st.error("Couldn't save — run the capital_plan_schema.sql migration in Supabase first.")
+            else:
+                st.error("Enter an amount.")
+    if not moves.empty:
+        mv = moves.copy()
+        mv["Account"] = mv["login"].map(lambda l: cfg.get(l, {}).get("nickname", l))
+        st.dataframe(mv[["moved_on", "Account", "kind", "amount", "note"]].rename(
+            columns={"moved_on": "Date", "kind": "Type", "amount": "Amount", "note": "Note"}),
+            use_container_width=True, hide_index=True,
+            column_config={"Amount": st.column_config.NumberColumn(format="dollar")})
 
 # ---------------------------------------------------------------- performance: equity + drawdown, monthly grid
 section("Performance")
@@ -1312,6 +1446,44 @@ cards([("Worst day", money(worst_day), sgn(worst_day)),
        ("Deepest dip below base", money(dd), "neg" if dd < 0 else ""),
        ("Trades", f"{n:,}", "")])
 
+# trade-level $ streaks (consecutive closed trades, not days) + hold time, winners vs losers
+sel_positions = aggregate_positions(tsel)
+if not sel_positions.empty:
+    ordered = sel_positions.sort_values("time")
+    best_run = run_cur_w = 0.0
+    worst_run = run_cur_l = 0.0
+    n_cur_w = n_cur_l = 0
+    best_win_n = best_loss_n = 0
+    for v in ordered["net"]:
+        if v > 0:
+            run_cur_w = run_cur_w + v if n_cur_w else v
+            n_cur_w += 1
+            best_run = max(best_run, run_cur_w)
+            best_win_n = max(best_win_n, n_cur_w)
+            run_cur_l, n_cur_l = 0.0, 0
+        elif v < 0:
+            run_cur_l = run_cur_l + v if n_cur_l else v
+            n_cur_l += 1
+            worst_run = min(worst_run, run_cur_l)
+            best_loss_n = max(best_loss_n, n_cur_l)
+            run_cur_w, n_cur_w = 0.0, 0
+
+    def fmt_hold(m):
+        if m != m:
+            return "—"
+        h, mm = divmod(int(round(m)), 60)
+        return f"{h}h {mm}m" if h else f"{mm}m"
+
+    hold_w = sel_positions.loc[sel_positions["net"] > 0, "hold_min"].dropna()
+    hold_l = sel_positions.loc[sel_positions["net"] < 0, "hold_min"].dropna()
+    cards([(f"Best win streak · {best_win_n} trades", money(best_run), "pos"),
+           (f"Worst loss streak · {best_loss_n} trades", money(worst_run), "neg" if worst_run < 0 else ""),
+           ("Avg hold · winners", fmt_hold(hold_w.mean()) if len(hold_w) else "—", ""),
+           ("Avg hold · losers", fmt_hold(hold_l.mean()) if len(hold_l) else "—", "")])
+    st.markdown("<div class='kw-note'>Streaks are consecutive closed trades (not days), summed in dollars. Hold time compares "
+                "how long winners stay open vs. losers — a much longer average hold on losers usually means stops aren't "
+                "being honored.</div>", unsafe_allow_html=True)
+
 # ---------------------------------------------------------------- trades
 # ---------------------------------------------------------------- when you trade best
 section(f"When you trade best · {sel}", anchor="when-you-trade-best")
@@ -1364,6 +1536,21 @@ else:
         st.dataframe(sym, use_container_width=True, hide_index=True,
                      column_config={"Net P&L": st.column_config.NumberColumn(format="dollar"),
                                     "Win %": st.column_config.NumberColumn(format="%.0f%%")})
+
+    if "type" in tw.columns:
+        ls = tw.copy()
+        ls["side"] = ls["type"].map({0: "Long", 1: "Short"})
+        by_side = ls.groupby("side")["net"].agg(["sum", "count", lambda x: (x > 0).mean() * 100])
+        by_side.columns = ["net", "trades", "winrate"]
+        by_side = by_side.reindex(["Long", "Short"]).fillna(0)
+        lcol, scol = st.columns(2)
+        for side, col_ in zip(["Long", "Short"], [lcol, scol]):
+            r = by_side.loc[side]
+            parts = [("Net P&L", money(r["net"]), sgn(r["net"])), ("Trades", f"{int(r['trades'])}", ""),
+                     ("Win %", f"{r['winrate']:.0f}%", "")]
+            html = "".join(f"<div><div class='k'>{k}</div><div class='v {cls}'>{v}</div></div>" for k, v, cls in parts)
+            col_.markdown(f"<div class='kw-acct'><span class='name'>{side}</span><div class='row'>{html}</div></div>",
+                         unsafe_allow_html=True)
 
 section(f"Trades · {sel}", anchor="trades")
 tab_open, tab_closed = st.tabs(["Open", "Closed"])
