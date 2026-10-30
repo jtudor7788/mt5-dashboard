@@ -745,31 +745,34 @@ cards([(f"Last 15 min · {len(last_15)} trade{'s' if len(last_15) != 1 else ''}"
 
 # ---------------------------------------------------------------- recovery & growth
 section("Recovery & growth", anchor="recovery-growth")
-rc1, rc2 = st.columns(2)
 
-with rc1:
-    recent_start = today - timedelta(days=1)   # yesterday + today
-    recent = trades[trades["date"] >= recent_start].sort_values("time")
-    if recent.empty:
-        st.markdown(f"<div class='kw-acct'><span class='name'>Recovery tracker</span>"
-                    f"<div class='kw-note' style='margin-top:10px'>No trades yet since {recent_start:%b %d}.</div></div>",
-                    unsafe_allow_html=True)
-    else:
-        cum_recent = recent["net"].cumsum()
-        trough = min(cum_recent.min(), 0.0)
-        current_net = cum_recent.iloc[-1]
-        if current_net >= 0:
-            parts = [("Status", "Recovered ✓", "pos"), ("Net since " + f"{recent_start:%b %d}", f"{current_net:+,.2f}", "pos")]
-            bar = ""
-        else:
-            recovered = current_net - trough
-            to_go = -current_net
-            pct = min(max(recovered / -trough * 100, 0), 100) if trough < 0 else 100
-            parts = [("Still down", money(to_go), "neg"), ("Worst point", money(trough), "neg"),
-                     ("Clawed back", money(recovered), "pos" if recovered > 0 else "")]
-            bar = f"<div class='k' style='margin-top:12px'>{pct:.0f}% recovered from the worst point</div><div class='kw-bar'><div style='width:{pct:.1f}%'></div></div>"
+# rolling drawdown from the most recent combined equity high (all accounts, all trades
+# since stats_from) — a new loss extends it automatically since the high-water mark
+# doesn't move, and it disappears the moment the combined total sets a new high (dd = 0).
+cum_all = daily_all.cumsum()
+peak_all = cum_all.cummax()
+current_dd = float(cum_all.iloc[-1] - peak_all.iloc[-1]) if len(cum_all) else 0.0
+show_recovery = current_dd < -0.005
+
+if show_recovery:
+    rc1, rc2 = st.columns(2)
+else:
+    rc2 = st.container()
+
+if show_recovery:
+    with rc1:
+        hwm_value = peak_all.iloc[-1]
+        hwm_date = cum_all[cum_all >= hwm_value - 0.005].index.max()
+        since = cum_all[cum_all.index > hwm_date] - hwm_value
+        trough = min(since.min(), current_dd, 0.0) if len(since) else current_dd
+        recovered = current_dd - trough
+        to_go = -current_dd
+        pct = min(max(recovered / -trough * 100, 0), 100) if trough < 0 else 100
+        parts = [("Still down", money(to_go), "neg"), ("Worst point", money(trough), "neg"),
+                 ("Clawed back", money(recovered), "pos" if recovered > 0 else "")]
+        bar = f"<div class='k' style='margin-top:12px'>{pct:.0f}% recovered from the worst point</div><div class='kw-bar'><div style='width:{pct:.1f}%'></div></div>"
         html = "".join(f"<div><div class='k'>{k}</div><div class='v {cls}'>{v}</div></div>" for k, v, cls in parts)
-        st.markdown(f"<div class='kw-acct'><span class='name'>Recovery tracker</span><span class='tag'>{recent_start:%b %d}–{today:%b %d}</span>"
+        st.markdown(f"<div class='kw-acct'><span class='name'>Recovery tracker</span><span class='tag'>since high on {hwm_date:%b %d}</span>"
                     f"<div class='row'>{html}</div>{bar}</div>", unsafe_allow_html=True)
 
 with rc2:
