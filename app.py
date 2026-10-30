@@ -746,12 +746,14 @@ cards([(f"Last 15 min · {len(last_15)} trade{'s' if len(last_15) != 1 else ''}"
 # ---------------------------------------------------------------- recovery & growth
 section("Recovery & growth", anchor="recovery-growth")
 
-# rolling drawdown from the combined equity high, but never looking back further than
+# rolling drawdown from the combined equity high, trade-by-trade (not just end-of-day)
+# so the worst point reflects the actual intraday low, never looking back further than
 # yesterday — a new loss extends it automatically, and it disappears the moment the
 # combined total since yesterday gets back to zero (dd = 0).
 window_start = today - timedelta(days=1)
-cum_all = daily_all[daily_all.index >= window_start].cumsum()
-peak_all = cum_all.cummax().clip(lower=0.0)   # the window itself starts at an implicit 0 high
+recent = trades[trades["date"] >= window_start].sort_values("time")
+cum_all = recent["net"].cumsum()
+peak_all = cum_all.cummax().clip(lower=0.0) if len(cum_all) else cum_all   # window starts at an implicit 0 high
 current_dd = float(cum_all.iloc[-1] - peak_all.iloc[-1]) if len(cum_all) else 0.0
 show_recovery = current_dd < -0.005
 
@@ -764,8 +766,8 @@ if show_recovery:
     with rc1:
         hwm_value = peak_all.iloc[-1]
         at_hwm = cum_all[cum_all >= hwm_value - 0.005]
-        hwm_date = at_hwm.index.max() if len(at_hwm) else window_start
-        since = cum_all[cum_all.index > hwm_date] - hwm_value
+        hwm_time = at_hwm.index.max() if len(at_hwm) else cum_all.index.min()
+        since = cum_all[cum_all.index > hwm_time] - hwm_value
         trough = min(since.min(), current_dd, 0.0) if len(since) else current_dd
         recovered = current_dd - trough
         to_go = -current_dd
