@@ -689,9 +689,9 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-NAV = [("Today's plan", "todays-plan"), ("Recovery", "recovery-growth"), ("Copy accuracy", "copy-accuracy"), ("Totals", "totals-to-date"), ("Accounts", "accounts"), ("Performance", "performance"),
+NAV = [("Recovery", "recovery-growth"), ("Copy accuracy", "copy-accuracy"), ("Totals", "totals-to-date"), ("Accounts", "accounts"), ("Performance", "performance"),
        ("By account", "weekly-monthly-by-account"), ("Friday summary", "friday-summary"),
-       ("Payouts", "weekly-payouts"), ("Payout history", "payout-history"), ("Seed", "seed-repayment"),
+       ("Seed", "seed-repayment"),
        ("Expenses", "expenses"), ("Calendar", "calendar"), ("Journal", "journal"),
        ("Risk & edge", "risk-edge"), ("Best times", "when-you-trade-best"), ("Trades", "trades")]
 nav_html = "".join(f"<a href='#{a}'>{l}</a>" for l, a in NAV)
@@ -700,33 +700,6 @@ st.markdown(f"<div class='kw-nav'>{nav_html}</div>", unsafe_allow_html=True)
 if not fresh:
     st.markdown(f"<div class='kw-alert'>⚠ Data is {age_min:.0f} minutes old. The VPS collector hasn't synced since {last_sync} ET — check that MT5 is logged in and the scheduled task is running.</div>",
                 unsafe_allow_html=True)
-
-# ---------------------------------------------------------------- today's plan
-section("Today's plan", anchor="todays-plan")
-today_plan = plans[plans["plan_date"] == today.isoformat()] if "plan_date" in plans.columns else pd.DataFrame()
-existing_plan = today_plan.iloc[0].to_dict() if not today_plan.empty else {}
-with st.form("daily_plan_form"):
-    pc1, pc2 = st.columns([2, 1])
-    bias_in = pc1.text_input("Bias", value=existing_plan.get("bias") or "",
-                             placeholder="e.g. Long gold above NY open, fade if it loses 4200")
-    max_in = pc2.number_input("Max trades today", min_value=0, step=1, value=int(existing_plan.get("max_trades") or 0))
-    inval_in = st.text_input("Invalidation", value=existing_plan.get("invalidation") or "",
-                             placeholder="What proves the bias wrong?")
-    if st.form_submit_button("Save today's plan", use_container_width=True):
-        try:
-            sb.table("daily_plans").upsert({"plan_date": today.isoformat(), "bias": bias_in or None,
-                                            "max_trades": int(max_in) or None, "invalidation": inval_in or None},
-                                           on_conflict="plan_date").execute()
-            st.cache_data.clear()
-            st.rerun()
-        except Exception:
-            st.error("Couldn't save — run the capital_plan_schema.sql migration in Supabase first.")
-if existing_plan:
-    trades_today_n = len(trades[trades["date"] == today])
-    cap = existing_plan.get("max_trades")
-    over = cap and trades_today_n > cap
-    st.markdown(f"<div class='kw-note'>{trades_today_n} trade{'s' if trades_today_n != 1 else ''} taken today"
-                f"{f' — over your {int(cap)}-trade cap' if over else ''}.</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- header cards: this week
 g = cur["gross"].sum() if not cur.empty else 0
@@ -1087,65 +1060,6 @@ week_opts = sorted(tracked["week"].unique(), reverse=True) if not tracked.empty 
 wsel = st.selectbox("Week", week_opts, format_func=lambda w: f"Week of {w:%b %d}" + (" (in progress)" if w == this_week else ""), label_visibility="collapsed")
 st.code(summary_text(wsel), language=None)
 st.markdown("<div class='kw-note'>Tap the copy icon in the top-right of the box, then paste into a text to Ben or Donna.</div>", unsafe_allow_html=True)
-
-# ---------------------------------------------------------------- weekly payouts chart
-section("Weekly payouts")
-if not tracked.empty:
-    wk_sum = tracked.groupby("week")[["jesse", "ben", "kolby", "seed", "expenses"]].sum().sort_index().tail(16)
-    x = [f"{w:%b %d}" for w in wk_sum.index]
-    fig = go.Figure()
-    for col, name, color in [("jesse", "Jesse", BLUE), ("ben", "Ben", GREEN), ("kolby", "Kolby", ACCENT), ("seed", "Seed", PURPLE), ("expenses", "Expenses", GREY)]:
-        fig.add_bar(x=x, y=wk_sum[col], name=name, marker_color=color, hovertemplate="%{x}<br>" + name + " %{y:,.0f}<extra></extra>")
-    st.plotly_chart(chart_layout(fig, 300, legend=True), use_container_width=True, config={"displayModeBar": False})
-else:
-    st.caption("No tracked weeks yet — check started_on in account_settings.")
-
-# ---------------------------------------------------------------- payout history + mark paid
-section("Payout history")
-if not allp.empty:
-    hist = allp.sort_values(["week", "account"], ascending=[False, True]).head(80).copy()
-    hist["Week"] = hist["week"].map(lambda w: f"{w:%b %d}")
-    hist["split_each"] = hist["ben"] + hist["expenses"] / 2
-    hist["jesse_to_ben"] = hist["expenses"] / 2
-    show = hist[["Week", "account", "status", "gross", "seed", "expenses", "jesse_to_ben", "ben_total", "jesse", "kolby", "expected_withdrawal", "withdrawn"]].rename(columns={
-        "account": "Account", "status": "Status", "gross": "Gross", "seed": "Seed", "expenses": "Expenses (Ben's card)",
-        "jesse_to_ben": "Jesse → Ben", "ben_total": "Ben receives", "jesse": "Jesse receives", "kolby": "Kolby receives",
-        "expected_withdrawal": "Should withdraw", "withdrawn": "Withdrawn (MT5)"})
-    st.dataframe(show, use_container_width=True, hide_index=True,
-                 column_config={k: st.column_config.NumberColumn(format="dollar") for k in show.columns if k not in ("Week", "Account", "Status")})
-
-    with st.expander("Mark a week as paid / undo"):
-        st.markdown("<div class='kw-note'>Marking a week paid freezes its split so later changes to expenses or seed settings don't rewrite history. "
-                    "The withdrawn column stays live from MT5 so a mismatch still shows.</div>", unsafe_allow_html=True)
-        unpaid = tracked[(~tracked["frozen"]) & (~tracked["in_progress"])].sort_values("week", ascending=False)
-        paid = tracked[tracked["frozen"]].sort_values("week", ascending=False)
-        cA, cB = st.columns(2)
-        with cA:
-            if unpaid.empty:
-                st.caption("Nothing waiting to be marked.")
-            else:
-                opts = {f"{r['week']:%b %d} · {r['account']} · Ben receives {money(r['ben'] + r['expenses'])} / Jesse receives {money(r['jesse'])}": (r["week"], r["login"]) for _, r in unpaid.iterrows()}
-                ch = st.selectbox("Unpaid weeks", list(opts.keys()))
-                note = st.text_input("Note (optional)")
-                if st.button("Mark paid", use_container_width=True):
-                    wk_, lg_ = opts[ch]
-                    r = unpaid[(unpaid["week"] == wk_) & (unpaid["login"] == lg_)].iloc[0]
-                    sb.table("payouts").upsert({"week": wk_.isoformat(), "login": int(lg_), "gross": float(r["gross"]), "expenses": float(r["expenses"]),
-                                                "seed": float(r["seed"]), "ben": float(r["ben"]), "jesse": float(r["jesse"]), "kolby": float(r["kolby"]),
-                                                "paid_on": today.isoformat(), "note": note or None}).execute()
-                    st.cache_data.clear()
-                    st.rerun()
-        with cB:
-            if paid.empty:
-                st.caption("No weeks marked paid yet.")
-            else:
-                opts2 = {f"{r['week']:%b %d} · {r['account']}": (r["week"], r["login"]) for _, r in paid.iterrows()}
-                ch2 = st.selectbox("Paid weeks", list(opts2.keys()))
-                if st.button("Undo mark", use_container_width=True):
-                    wk_, lg_ = opts2[ch2]
-                    sb.table("payouts").delete().eq("week", wk_.isoformat()).eq("login", int(lg_)).execute()
-                    st.cache_data.clear()
-                    st.rerun()
 
 # ---------------------------------------------------------------- seed tracker
 seeded = [l for l in live if cfg[l]["seed"] > 0 and seed_left[l] > 0]
